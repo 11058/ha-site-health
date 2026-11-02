@@ -75,6 +75,9 @@ class Tunnel:
     endpoint: str
     handshake_age_s: int | None
     connected: bool
+    # Dial-in peer (no endpoint configured): a VPN client such as the admin's
+    # phone. Its absence is normal, so it is shown but never alarmed on.
+    dial_in: bool = False
     rx_byte: int = 0
     tx_byte: int = 0
 

@@ -97,8 +97,10 @@ def test_probes(parsers, gw):
 def test_tunnels(parsers, gw):
     tunnels = parsers.parse_tunnels(gw["wg_peers"], stale_s=180)
     dom = tunnels["dom_hub"]
-    assert dom.connected
+    assert dom.connected and not dom.dial_in
     assert dom.handshake_age_s == 105
+    phone = tunnels["admin_phone"]
+    assert phone.dial_in and not phone.connected
     assert (
         parsers.parse_tunnels(gw["wg_peers"], stale_s=60)["dom_hub"].connected is False
     )

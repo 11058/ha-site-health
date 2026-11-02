@@ -164,8 +164,8 @@ class SiteHealthPanel extends HTMLElement {
       </tr>`).join("");
     const tunnels = s.tunnels.map((t) => `
       <tr>
-        <td>${dot(t.connected)} ${esc(t.name)}</td>
-        <td class="sub">WireGuard ${esc(t.interface)}</td>
+        <td>${dot(t.dial_in && !t.connected ? null : t.connected)} ${esc(t.name)}</td>
+        <td class="sub">${t.dial_in ? "VPN-клиент" : "WireGuard"} ${esc(t.interface)}</td>
         <td class="num">${t.handshake_age_s !== null ? `${dur(t.handshake_age_s)} назад` : "нет"}</td>
       </tr>`).join("");
     return `

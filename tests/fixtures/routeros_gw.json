@@ -218,6 +218,15 @@
    "disabled": "false",
    "dynamic": "false",
    "invalid": "false"
+  },
+  {
+   ".id": "*9",
+   "address": "10.5.254.1/30",
+   "network": "10.5.254.0",
+   "interface": "br-byedpi",
+   "disabled": "false",
+   "dynamic": "false",
+   "invalid": "false"
   }
  ],
  "dhcp_clients": [
@@ -268,6 +277,14 @@
    "last-handshake": "1m45s",
    "rx": "266400",
    "tx": "2703400",
+   "disabled": "false",
+   "endpoint-address": "vpn.example.org"
+  },
+  {
+   ".id": "*2",
+   "name": "admin-phone",
+   "interface": "wg-Admin",
+   "public-key": "BBBB",
    "disabled": "false"
   }
  ],

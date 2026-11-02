@@ -206,6 +206,8 @@ def _site_sensors(c: DeviceCoordinator) -> Iterable[tuple[str, Callable]]:
                 state_class=SensorStateClass.MEASUREMENT,
             )  # fmt: skip
     for key, tun in data.tunnels.items():
+        if tun.dial_in:
+            continue
         ph = {"tunnel": tun.name}
         yield f"tunnel_{key}_handshake", lambda k=key, ph=ph: SiteSensor(
             c, f"tunnel_{k}_handshake", lambda d, k=k: d.tunnels[k].handshake_age_s,

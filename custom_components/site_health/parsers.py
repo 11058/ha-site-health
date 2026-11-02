@@ -278,6 +278,7 @@ def parse_tunnels(rows: Iterable[Row], stale_s: int) -> dict[str, Tunnel]:
             endpoint=endpoint,
             handshake_age_s=age,
             connected=age is not None and age <= stale_s,
+            dial_in=not row.get("endpoint-address"),
             rx_byte=as_int(row.get("rx")) or 0,
             tx_byte=as_int(row.get("tx")) or 0,
         )
@@ -381,7 +382,7 @@ def parse_segments(
             network = ipaddress.ip_interface(str(row.get("address", ""))).network
         except ValueError:
             continue
-        if network.prefixlen >= 31:  # point-to-point links are not segments
+        if network.prefixlen >= 30:  # point-to-point / container links
             continue
         vlan_id = vlan_ids.get(iface)
         if vlan_id is None and not info:

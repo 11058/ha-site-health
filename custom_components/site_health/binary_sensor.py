@@ -104,6 +104,8 @@ def _builder(c: DeviceCoordinator) -> Iterable[tuple[str, Callable]]:
             },
         )  # fmt: skip
     for key, tun in data.tunnels.items():
+        if tun.dial_in:
+            continue
         yield f"tunnel_{key}", lambda k=key, name=tun.name: SiteBinary(
             c, f"tunnel_{k}", lambda d, k=k: d.tunnels[k].connected,
             translation_key="tunnel", placeholders={"tunnel": name},
