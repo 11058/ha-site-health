@@ -151,6 +151,12 @@ class MikrotikClient:
     async def dhcp_clients(self) -> list[dict]:
         return await self._list("ip/dhcp-client", optional=True)
 
+    async def pppoe_clients(self) -> list[dict]:
+        return await self._list("interface/pppoe-client", optional=True)
+
+    async def lte(self) -> list[dict]:
+        return await self._list("interface/lte", optional=True)
+
     async def netwatch(self) -> list[dict]:
         return await self._list("tool/netwatch", optional=True)
 

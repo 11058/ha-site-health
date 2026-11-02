@@ -11,7 +11,7 @@ from . import SiteHealthConfigEntry
 from .const import CONF_PASSWORD, CONF_USERNAME
 from .websocket_api import site_overview
 
-TO_REDACT = {CONF_PASSWORD, CONF_USERNAME, "serial", "endpoint"}
+TO_REDACT = {CONF_PASSWORD, CONF_USERNAME, "serial", "endpoint", "iccid", "imsi"}
 
 
 async def async_get_config_entry_diagnostics(

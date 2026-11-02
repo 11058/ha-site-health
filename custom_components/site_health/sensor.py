@@ -256,3 +256,7 @@ async def async_setup_entry(
         yield from _site_sensors(c)
 
     setup_dynamic(entry, runtime.all(), async_add_entities, builder)
+    for sub_id, modem in entry.runtime_data.modems.items():
+        from .modem_entity import modem_sensors
+
+        async_add_entities(modem_sensors(modem), config_subentry_id=sub_id)

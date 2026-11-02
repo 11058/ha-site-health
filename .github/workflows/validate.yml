@@ -65,9 +65,9 @@ jobs:
           import importlib, sys
           sys.path.insert(0, ".")
           modules = [
-              "const", "models", "parsers", "mikrotik", "coordinator", "dynamic",
-              "entity", "config_flow", "sensor", "binary_sensor", "button",
-              "websocket_api", "panel", "diagnostics", "",
+              "const", "models", "parsers", "mikrotik", "tandem", "coordinator", "dynamic",
+              "entity", "modem_entity", "config_flow", "sensor", "binary_sensor", "button",
+              "websocket_api", "panel", "provision", "diagnostics", "",
           ]
           failed = []
           for name in modules:

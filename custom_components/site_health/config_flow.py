@@ -18,6 +18,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_ADMIN_VLAN,
     CONF_AUTO_CONFIGURE,
     CONF_FAMILY_VLAN,
     CONF_HA_IP,
@@ -30,12 +31,14 @@ from .const import (
     CONF_USERNAME,
     CONF_VERIFY_SSL,
     CONF_WG_STALE,
+    DEFAULT_ADMIN_VLAN,
     DEFAULT_AUTO_CONFIGURE,
     DEFAULT_FAMILY_VLAN,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_WG_STALE,
     DOMAIN,
     SUBENTRY_DEVICE,
+    SUBENTRY_MODEM,
 )
 from .mikrotik import MikrotikAuthError, MikrotikError
 from .parsers import mikrotik_candidates
@@ -157,7 +160,7 @@ class SiteHealthConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_supported_subentry_types(
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
-        return {SUBENTRY_DEVICE: DeviceSubentryFlow}
+        return {SUBENTRY_DEVICE: DeviceSubentryFlow, SUBENTRY_MODEM: ModemSubentryFlow}
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -293,6 +296,9 @@ class SiteHealthOptionsFlow(OptionsFlow):
             ): vol.All(vol.Coerce(int), vol.Range(min=10, max=600)),
             vol.Optional(
                 CONF_FAMILY_VLAN, default=o.get(CONF_FAMILY_VLAN, DEFAULT_FAMILY_VLAN)
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=4094)),
+            vol.Optional(
+                CONF_ADMIN_VLAN, default=o.get(CONF_ADMIN_VLAN, DEFAULT_ADMIN_VLAN)
             ): vol.All(vol.Coerce(int), vol.Range(min=1, max=4094)),
             vol.Optional(
                 CONF_WG_STALE, default=o.get(CONF_WG_STALE, DEFAULT_WG_STALE)
@@ -457,3 +463,65 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
             errors=errors,
             description_placeholders={"host": sub.data.get(CONF_HOST, "")},
         )
+
+
+class ModemSubentryFlow(ConfigSubentryFlow):
+    """A cellular router in front of the core router (Tandem-4GT)."""
+
+    def _gateway_guess(self) -> str:
+        runtime = getattr(self._get_entry(), "runtime_data", None)
+        site = getattr(getattr(runtime, "site", None), "site", None)
+        if site is None:
+            return ""
+        for wan in site.wans.values():
+            if wan.kind == "dhcp" and wan.bound and wan.gateway:
+                return wan.gateway
+        return ""
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        from homeassistant.helpers.aiohttp_client import async_create_clientsession
+
+        from .tandem import TandemAuthError, TandemClient, TandemError
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            client = TandemClient(
+                async_create_clientsession(self.hass),
+                user_input[CONF_HOST],
+                user_input[CONF_USERNAME],
+                user_input[CONF_PASSWORD],
+            )
+            try:
+                await client.login()
+                out = await client.status()
+            except TandemAuthError:
+                errors["base"] = "invalid_auth"
+            except TandemError:
+                errors["base"] = "cannot_connect"
+            else:
+                if not out.get("sim") and not out.get("system"):
+                    errors["base"] = "not_tandem"
+                else:
+                    return self.async_create_entry(
+                        title=user_input["name"],
+                        data={k: v for k, v in user_input.items() if k != "name"},
+                        unique_id=f"modem:{user_input[CONF_HOST]}",
+                    )
+        defaults = user_input or {}
+        schema = vol.Schema(
+            {
+                vol.Required("name", default=defaults.get("name", "Tandem-4GT")): str,
+                vol.Required(
+                    CONF_HOST, default=defaults.get(CONF_HOST, self._gateway_guess())
+                ): str,
+                vol.Required(
+                    CONF_USERNAME, default=defaults.get(CONF_USERNAME, "root")
+                ): str,
+                vol.Required(CONF_PASSWORD): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+            }
+        )
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)

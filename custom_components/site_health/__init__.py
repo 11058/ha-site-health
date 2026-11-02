@@ -6,18 +6,23 @@ import logging
 import re
 from dataclasses import dataclass, field
 
+import aiohttp
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import (
+    async_create_clientsession,
+    async_get_clientsession,
+)
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     ATTR_MAC,
     ATTR_NAME,
+    CONF_ADMIN_VLAN,
     CONF_AUTO_CONFIGURE,
     CONF_FAMILY_VLAN,
     CONF_HA_IP,
@@ -30,19 +35,27 @@ from .const import (
     CONF_USERNAME,
     CONF_VERIFY_SSL,
     CONF_WG_STALE,
+    DEFAULT_ADMIN_VLAN,
     DEFAULT_AUTO_CONFIGURE,
     DEFAULT_FAMILY_VLAN,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_WG_STALE,
     DOMAIN,
+    PLACE_ADMIN,
+    PLACE_FAMILY,
+    PLACE_GUEST,
     SERVICE_ADD_FAMILY,
+    SERVICE_MODEM_SIM,
     SERVICE_REFRESH,
     SERVICE_REMOVE_FAMILY,
+    SERVICE_SET_SEGMENT,
     SUBENTRY_DEVICE,
+    SUBENTRY_MODEM,
 )
-from .coordinator import DeviceCoordinator, SiteCoordinator
+from .coordinator import DeviceCoordinator, ModemCoordinator, SiteCoordinator
 from .mikrotik import MikrotikClient, MikrotikError
-from .parsers import as_int, family_comment, norm_mac
+from .parsers import as_int, norm_mac, place_comment
+from .tandem import TandemClient, TandemError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +70,7 @@ _MAC_RE = re.compile(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$")
 class SiteRuntime:
     site: SiteCoordinator
     devices: dict[str, DeviceCoordinator] = field(default_factory=dict)
+    modems: dict[str, ModemCoordinator] = field(default_factory=dict)
 
     def all(self) -> list[DeviceCoordinator]:
         return [self.site, *self.devices.values()]
@@ -93,6 +107,17 @@ def make_client(hass: HomeAssistant, data: dict) -> MikrotikClient:
     )
 
 
+def make_modem_client(hass: HomeAssistant, data: dict) -> TandemClient:
+    # A separate cookie jar: LuCI's sysauth cookie must not leak across hosts
+    # or get mixed with Home Assistant's shared session.
+    return TandemClient(
+        async_create_clientsession(hass, cookie_jar=aiohttp.DummyCookieJar()),
+        data[CONF_HOST],
+        data[CONF_USERNAME],
+        data[CONF_PASSWORD],
+    )
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     from .panel import async_register_panel
     from .websocket_api import async_register_websocket
@@ -113,6 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
         name=entry.data.get(CONF_SITE_NAME) or entry.title,
         interval_s=interval,
         family_vlan=opts.get(CONF_FAMILY_VLAN, DEFAULT_FAMILY_VLAN),
+        admin_vlan=opts.get(CONF_ADMIN_VLAN, DEFAULT_ADMIN_VLAN),
         wg_stale_s=opts.get(CONF_WG_STALE, DEFAULT_WG_STALE),
     )
     await site.async_config_entry_first_refresh()
@@ -135,6 +161,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
         runtime.devices[sub_id] = coord
         if coord.data:
             site.infra_macs |= {i.mac for i in coord.data.interfaces.values() if i.mac}
+
+    for sub_id, sub in entry.subentries.items():
+        if sub.subentry_type != SUBENTRY_MODEM:
+            continue
+        modem = ModemCoordinator(
+            hass,
+            entry,
+            make_modem_client(hass, sub.data),
+            name=sub.title,
+            interval_s=interval,
+            subentry_id=sub_id,
+        )
+        await modem.async_restore()
+        await modem.async_refresh()
+        runtime.modems[sub_id] = modem
 
     entry.runtime_data = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -218,56 +259,89 @@ def _check_mac(mac: str) -> str:
     return mac
 
 
-async def async_add_family(
-    hass: HomeAssistant, mac: str, name: str = "", entry_id: str | None = None
+def _vlan_for(site: SiteCoordinator, place: str) -> int | None:
+    return {PLACE_FAMILY: site.family_vlan, PLACE_ADMIN: site.admin_vlan}.get(place)
+
+
+async def async_set_segment(
+    hass: HomeAssistant,
+    mac: str,
+    place: str,
+    name: str = "",
+    entry_id: str | None = None,
 ) -> dict:
-    """Map a MAC to the family VLAN on the core router's Wi-Fi access list."""
+    """Put a Wi-Fi client in the family or admin VLAN, or back to guests.
+
+    Only entries for the VLANs managed here (family, admin) are touched; a MAC
+    mapped by hand to any other VLAN is left alone and reported.
+    """
     mac = _check_mac(mac)
+    if place not in (PLACE_GUEST, PLACE_FAMILY, PLACE_ADMIN):
+        raise ServiceValidationError(f"Unknown segment: {place}")
     runtime = _pick_runtime(hass, entry_id)
     site = runtime.site
-    vlan = site.family_vlan
+    managed = {site.family_vlan, site.admin_vlan}
+    target = _vlan_for(site, place)
     try:
-        rows = await site.client.wifi_access_list()
-        mine = [r for r in rows if norm_mac(r.get("mac-address")) == mac]
-        if any(as_int(r.get("vlan-id")) == vlan for r in mine):
-            result = {"mac": mac, "status": "already_family"}
-        elif mine:
-            # An admin (VLAN 99) or other mapping is never overwritten from HA.
-            other = as_int(mine[0].get("vlan-id"))
+        rows = [
+            r
+            for r in await site.client.wifi_access_list()
+            if norm_mac(r.get("mac-address")) == mac and r.get(".id")
+        ]
+        foreign = [r for r in rows if as_int(r.get("vlan-id")) not in managed]
+        if foreign:
+            other = as_int(foreign[0].get("vlan-id"))
             raise ServiceValidationError(
-                f"{mac} is already mapped to VLAN {other}; change it on the router"
+                f"{mac} is mapped to VLAN {other} by hand; change it on the router"
             )
+        current = [r for r in rows if as_int(r.get("vlan-id")) in managed]
+        if target is None:
+            for row in current:
+                await site.client.remove_wifi_access(row[".id"])
+            status = "guest" if current else "already_guest"
+        elif current and as_int(current[0].get("vlan-id")) == target:
+            status = f"already_{place}"
+        elif current:
+            await site.client.set_wifi_access(
+                current[0][".id"],
+                {"vlan-id": str(target), "comment": place_comment(place, name, target)},
+            )
+            for extra in current[1:]:
+                await site.client.remove_wifi_access(extra[".id"])
+            status = place
         else:
-            await site.client.add_wifi_access(mac, vlan, family_comment(name, vlan))
-            kicked = await site.client.kick_wifi_client(mac)
-            result = {"mac": mac, "status": "added", "reconnected": kicked}
+            await site.client.add_wifi_access(
+                mac, target, place_comment(place, name, target)
+            )
+            status = place
+        kicked = (
+            await site.client.kick_wifi_client(mac)
+            if not status.startswith("already")
+            else 0
+        )
     except MikrotikError as err:
         raise HomeAssistantError(f"Router refused the change: {err}") from err
     await site.async_refresh()  # the panel re-reads right after this
-    return result
+    return {"mac": mac, "status": status, "reconnected": kicked}
+
+
+async def async_add_family(
+    hass: HomeAssistant, mac: str, name: str = "", entry_id: str | None = None
+) -> dict:
+    return await async_set_segment(hass, mac, PLACE_FAMILY, name, entry_id)
 
 
 async def async_remove_family(
     hass: HomeAssistant, mac: str, entry_id: str | None = None
 ) -> dict:
-    mac = _check_mac(mac)
-    runtime = _pick_runtime(hass, entry_id)
-    site = runtime.site
-    removed = 0
-    try:
-        for row in await site.client.wifi_access_list():
-            if norm_mac(row.get("mac-address")) != mac:
-                continue
-            if as_int(row.get("vlan-id")) != site.family_vlan or not row.get(".id"):
-                continue
-            await site.client.remove_wifi_access(row[".id"])
-            removed += 1
-        kicked = await site.client.kick_wifi_client(mac) if removed else 0
-    except MikrotikError as err:
-        raise HomeAssistantError(f"Router refused the change: {err}") from err
-    await site.async_refresh()  # the panel re-reads right after this
-    return {"mac": mac, "status": "removed" if removed else "not_family",
-            "reconnected": kicked}  # fmt: skip
+    return await async_set_segment(hass, mac, PLACE_GUEST, "", entry_id)
+
+
+def _find_modem(hass: HomeAssistant, subentry_id: str) -> ModemCoordinator:
+    for _entry, runtime in loaded_runtimes(hass):
+        if subentry_id in runtime.modems:
+            return runtime.modems[subentry_id]
+    raise ServiceValidationError(f"Modem {subentry_id} is not loaded")
 
 
 def _register_services(hass: HomeAssistant) -> None:
@@ -283,6 +357,19 @@ def _register_services(hass: HomeAssistant) -> None:
         return await async_remove_family(
             hass, call.data[ATTR_MAC], call.data.get("entry_id")
         )
+
+    async def set_segment(call: ServiceCall) -> dict:
+        return await async_set_segment(
+            hass, call.data[ATTR_MAC], call.data["segment"],
+            call.data.get(ATTR_NAME, ""), call.data.get("entry_id"),
+        )  # fmt: skip
+
+    async def modem_sim(call: ServiceCall) -> None:
+        coord = _find_modem(hass, call.data["modem"])
+        try:
+            await coord.async_select_sim(call.data["slot"])
+        except TandemError as err:
+            raise HomeAssistantError(str(err)) from err
 
     async def refresh(call: ServiceCall) -> None:
         for _entry, runtime in loaded_runtimes(hass):
@@ -308,5 +395,32 @@ def _register_services(hass: HomeAssistant) -> None:
         remove,
         schema=vol.Schema({vol.Required(ATTR_MAC): cv.string, **base}),
         supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_SEGMENT,
+        set_segment,
+        schema=vol.Schema(
+            {
+                vol.Required(ATTR_MAC): cv.string,
+                vol.Required("segment"): vol.In(
+                    [PLACE_GUEST, PLACE_FAMILY, PLACE_ADMIN]
+                ),
+                vol.Optional(ATTR_NAME): cv.string,
+                **base,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_MODEM_SIM,
+        modem_sim,
+        schema=vol.Schema(
+            {
+                vol.Required("modem"): cv.string,
+                vol.Required("slot"): vol.All(vol.Coerce(int), vol.In([1, 2])),
+            }
+        ),
     )
     hass.services.async_register(DOMAIN, SERVICE_REFRESH, refresh)

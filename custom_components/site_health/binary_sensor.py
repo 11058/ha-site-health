@@ -120,3 +120,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: SiteHealthConfigEntry, async_add_entities
 ) -> None:
     setup_dynamic(entry, entry.runtime_data.all(), async_add_entities, _builder)
+    for sub_id, modem in entry.runtime_data.modems.items():
+        from .modem_entity import modem_binaries
+
+        async_add_entities(modem_binaries(modem), config_subentry_id=sub_id)

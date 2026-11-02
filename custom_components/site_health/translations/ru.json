@@ -116,6 +116,32 @@
         "already_configured": "Это устройство уже добавлено",
         "reconfigure_successful": "Сохранено"
       }
+    },
+    "modem": {
+      "entry_type": "4G-роутер",
+      "initiate_flow": {
+        "user": "Добавить 4G-роутер"
+      },
+      "step": {
+        "user": {
+          "title": "4G-роутер (Тандем-4GT)",
+          "description": "Сотовый роутер перед главным роутером. Логин его веб-интерфейса (заводской root / root — смените).",
+          "data": {
+            "name": "Название",
+            "host": "Адрес",
+            "username": "Пользователь",
+            "password": "Пароль"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Нет ответа веб-интерфейса",
+        "invalid_auth": "Неверный логин или пароль",
+        "not_tandem": "Ответил, но это не страница модема Тандем"
+      },
+      "abort": {
+        "already_configured": "Уже добавлен"
+      }
     }
   },
   "options": {
@@ -126,7 +152,8 @@
           "scan_interval": "Интервал опроса, с",
           "family_vlan": "VLAN домашних",
           "wg_stale_seconds": "Туннель WireGuard считать упавшим без handshake дольше, с",
-          "auto_configure": "Настраивать главный роутер автоматически (доступ к радиомостам, проверки интернета)"
+          "auto_configure": "Настраивать главный роутер автоматически (доступ к радиомостам, проверки интернета)",
+          "admin_vlan": "VLAN админа"
         }
       }
     }
@@ -207,6 +234,36 @@
       },
       "clients_other": {
         "name": "Клиенты: Прочее"
+      },
+      "modem_active_sim": {
+        "name": "Активная SIM"
+      },
+      "modem_operator": {
+        "name": "Оператор"
+      },
+      "modem_network": {
+        "name": "Сеть"
+      },
+      "modem_rsrp": {
+        "name": "RSRP"
+      },
+      "modem_rsrq": {
+        "name": "RSRQ"
+      },
+      "modem_sinr": {
+        "name": "SINR"
+      },
+      "modem_rssi": {
+        "name": "RSSI"
+      },
+      "modem_signal": {
+        "name": "Уровень сигнала"
+      },
+      "modem_temperature": {
+        "name": "Температура модема"
+      },
+      "modem_connected_since": {
+        "name": "На связи с"
       }
     },
     "binary_sensor": {
@@ -221,11 +278,23 @@
       },
       "tunnel": {
         "name": "{tunnel}"
+      },
+      "modem_connected": {
+        "name": "Мобильное подключение"
+      },
+      "modem_registered": {
+        "name": "Зарегистрирован в сети"
+      },
+      "modem_roaming": {
+        "name": "Роуминг"
       }
     },
     "button": {
       "refresh": {
         "name": "Обновить"
+      },
+      "modem_select_sim": {
+        "name": "Переключить на SIM {slot}"
       }
     }
   },
@@ -265,6 +334,42 @@
     "refresh": {
       "name": "Обновить",
       "description": "Опросить все устройства сейчас"
+    },
+    "set_device_segment": {
+      "name": "Назначить сеть Wi-Fi-устройству",
+      "description": "Перевести Wi-Fi-клиента в сеть домашних или админа либо вернуть в гостевую (access-list главного роутера).",
+      "fields": {
+        "mac": {
+          "name": "MAC",
+          "description": "MAC клиента"
+        },
+        "segment": {
+          "name": "Сеть",
+          "description": "guest / family / admin"
+        },
+        "name": {
+          "name": "Имя",
+          "description": "Комментарий правила (латиницей)"
+        },
+        "entry_id": {
+          "name": "Объект",
+          "description": "Только если объектов несколько"
+        }
+      }
+    },
+    "modem_select_sim": {
+      "name": "Переключить SIM модема",
+      "description": "Сделать активным указанный слот SIM. Интернет пропадёт на 6–9 с.",
+      "fields": {
+        "modem": {
+          "name": "Модем",
+          "description": "ID подзаписи модема"
+        },
+        "slot": {
+          "name": "Слот",
+          "description": "1 / 2"
+        }
+      }
     }
   },
   "selector": {

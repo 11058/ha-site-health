@@ -116,6 +116,32 @@
         "already_configured": "This device is already added",
         "reconfigure_successful": "Saved"
       }
+    },
+    "modem": {
+      "entry_type": "4G router",
+      "initiate_flow": {
+        "user": "Add 4G router"
+      },
+      "step": {
+        "user": {
+          "title": "4G router (Tandem-4GT)",
+          "description": "The cellular router in front of the core router. Its web interface login (default root / root — change it).",
+          "data": {
+            "name": "Name",
+            "host": "Address",
+            "username": "Username",
+            "password": "Password"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "No answer from its web interface",
+        "invalid_auth": "Login rejected",
+        "not_tandem": "Answered, but this is not a Tandem modem page"
+      },
+      "abort": {
+        "already_configured": "Already added"
+      }
     }
   },
   "options": {
@@ -126,7 +152,8 @@
           "scan_interval": "Poll interval, s",
           "family_vlan": "Family VLAN id",
           "wg_stale_seconds": "WireGuard handshake considered lost after, s",
-          "auto_configure": "Configure the core router automatically (forward rule to radios, internet probes)"
+          "auto_configure": "Configure the core router automatically (forward rule to radios, internet probes)",
+          "admin_vlan": "Admin VLAN id"
         }
       }
     }
@@ -207,6 +234,36 @@
       },
       "clients_other": {
         "name": "Clients: Other"
+      },
+      "modem_active_sim": {
+        "name": "Active SIM"
+      },
+      "modem_operator": {
+        "name": "Operator"
+      },
+      "modem_network": {
+        "name": "Network"
+      },
+      "modem_rsrp": {
+        "name": "RSRP"
+      },
+      "modem_rsrq": {
+        "name": "RSRQ"
+      },
+      "modem_sinr": {
+        "name": "SINR"
+      },
+      "modem_rssi": {
+        "name": "RSSI"
+      },
+      "modem_signal": {
+        "name": "Signal"
+      },
+      "modem_temperature": {
+        "name": "Modem temperature"
+      },
+      "modem_connected_since": {
+        "name": "Connected since"
       }
     },
     "binary_sensor": {
@@ -221,11 +278,23 @@
       },
       "tunnel": {
         "name": "{tunnel}"
+      },
+      "modem_connected": {
+        "name": "Mobile connection"
+      },
+      "modem_registered": {
+        "name": "Registered in network"
+      },
+      "modem_roaming": {
+        "name": "Roaming"
       }
     },
     "button": {
       "refresh": {
         "name": "Refresh"
+      },
+      "modem_select_sim": {
+        "name": "Switch to SIM {slot}"
       }
     }
   },
@@ -265,6 +334,42 @@
     "refresh": {
       "name": "Refresh",
       "description": "Poll every device now"
+    },
+    "set_device_segment": {
+      "name": "Place Wi-Fi device",
+      "description": "Put a Wi-Fi client into the family or admin VLAN, or back to guests (access-list of the core router).",
+      "fields": {
+        "mac": {
+          "name": "MAC",
+          "description": "Client MAC"
+        },
+        "segment": {
+          "name": "Segment",
+          "description": "guest / family / admin"
+        },
+        "name": {
+          "name": "Name",
+          "description": "Rule comment (transliterated)"
+        },
+        "entry_id": {
+          "name": "Site",
+          "description": "Only with several sites"
+        }
+      }
+    },
+    "modem_select_sim": {
+      "name": "Switch modem SIM",
+      "description": "Make the given SIM slot active. The uplink drops for 6-9 s.",
+      "fields": {
+        "modem": {
+          "name": "Modem",
+          "description": "Subentry id of the modem"
+        },
+        "slot": {
+          "name": "Slot",
+          "description": "1 / 2"
+        }
+      }
     }
   },
   "selector": {

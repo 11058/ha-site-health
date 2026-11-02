@@ -30,3 +30,42 @@ remove_family_device:
           integration: site_health
 
 refresh:
+
+set_device_segment:
+  fields:
+    mac:
+      required: true
+      example: "AA:BB:CC:DD:EE:FF"
+      selector:
+        text:
+    segment:
+      required: true
+      selector:
+        select:
+          options:
+            - guest
+            - family
+            - admin
+    name:
+      required: false
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: site_health
+
+modem_select_sim:
+  fields:
+    modem:
+      required: true
+      selector:
+        text:
+    slot:
+      required: true
+      selector:
+        select:
+          options:
+            - "1"
+            - "2"

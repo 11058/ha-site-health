@@ -18,18 +18,21 @@ CONF_HA_IP = "ha_ip"
 # Options.
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_FAMILY_VLAN = "family_vlan"
+CONF_ADMIN_VLAN = "admin_vlan"
 CONF_WG_STALE = "wg_stale_seconds"
 CONF_AUTO_CONFIGURE = "auto_configure"
 DEFAULT_AUTO_CONFIGURE = True
 
 DEFAULT_SCAN_INTERVAL = 30
 DEFAULT_FAMILY_VLAN = 30
+DEFAULT_ADMIN_VLAN = 99
 # WireGuard sends keepalives every 25-30 s; three missed ones mean the
 # tunnel is gone, not just idle.
 DEFAULT_WG_STALE = 180
 
 # Subentry types.
 SUBENTRY_DEVICE = "device"
+SUBENTRY_MODEM = "modem"
 
 HTTP_TIMEOUT = 10
 
@@ -92,6 +95,13 @@ SEGMENT_BY_NAME_HINT: list[tuple[str, str]] = [
 SERVICE_ADD_FAMILY = "add_family_device"
 SERVICE_REMOVE_FAMILY = "remove_family_device"
 SERVICE_REFRESH = "refresh"
+SERVICE_SET_SEGMENT = "set_device_segment"
+SERVICE_MODEM_SIM = "modem_select_sim"
+
+# Wi-Fi placements the integration may set: guest = no access-list entry.
+PLACE_GUEST = "guest"
+PLACE_FAMILY = "family"
+PLACE_ADMIN = "admin"
 
 ATTR_MAC = "mac"
 ATTR_NAME = "name"

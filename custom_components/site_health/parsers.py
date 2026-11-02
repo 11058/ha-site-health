@@ -118,6 +118,14 @@ def parse_rate_mbps(value: Any) -> float | None:
     return round(number * factor, 1)
 
 
+def is_random_mac(mac: str) -> bool:
+    """Locally administered bit set: a per-network private (random) address."""
+    try:
+        return bool(int(mac.split(":")[0], 16) & 0x02)
+    except (ValueError, IndexError):
+        return False
+
+
 def norm_mac(mac: Any) -> str:
     return str(mac or "").strip().upper()
 
@@ -216,26 +224,82 @@ def apply_rates(
 
 
 def parse_wans(
-    dhcp_clients: Iterable[Row], interfaces: dict[str, InterfaceInfo]
+    dhcp_clients: Iterable[Row],
+    interfaces: dict[str, InterfaceInfo],
+    *,
+    pppoe_clients: Iterable[Row] = (),
+    lte: Iterable[Row] = (),
+    addresses: Iterable[Row] = (),
 ) -> dict[str, WanLink]:
+    """Uplinks: DHCP clients on WAN ports, PPPoE clients, LTE modems."""
+    addr_by_iface: dict[str, str] = {}
+    for row in addresses:
+        if as_bool(row.get("disabled")) or as_bool(row.get("invalid")):
+            continue
+        addr_by_iface.setdefault(
+            str(row.get("interface", "")), str(row.get("address", "")).split("/")[0]
+        )
+
+    def link(iface: str, *, kind: str, status: str, up: bool, **kw) -> WanLink:
+        info = interfaces.get(iface)
+        return WanLink(
+            interface=iface,
+            kind=kind,
+            status=status,
+            bound=up,
+            comment=kw.pop("comment", "") or (info.comment if info else ""),
+            running=info.running if info else False,
+            rx_bps=info.rx_bps if info else None,
+            tx_bps=info.tx_bps if info else None,
+            **kw,
+        )
+
     result: dict[str, WanLink] = {}
     for row in dhcp_clients:
         iface = str(row.get("interface", ""))
         if not iface:
             continue
         status = str(row.get("status", "")) or "unknown"
-        info = interfaces.get(iface)
-        result[iface] = WanLink(
-            interface=iface,
+        result[iface] = link(
+            iface,
+            kind="dhcp",
             status=status,
-            bound=status == "bound",
+            up=status == "bound",
             address=str(row.get("address", "")).split("/")[0],
             gateway=str(row.get("gateway", "")),
-            comment=str(row.get("comment", "") or (info.comment if info else "")),
+            comment=str(row.get("comment", "")),
             disabled=as_bool(row.get("disabled")),
-            running=info.running if info else False,
-            rx_bps=info.rx_bps if info else None,
-            tx_bps=info.tx_bps if info else None,
+        )
+    for row in pppoe_clients:
+        name = str(row.get("name", ""))
+        if not name:
+            continue
+        running = as_bool(row.get("running"))
+        disabled = as_bool(row.get("disabled"))
+        result[name] = link(
+            name,
+            kind="pppoe",
+            status="disabled" if disabled else "connected" if running else "down",
+            up=running and not disabled,
+            address=addr_by_iface.get(name, ""),
+            gateway=str(row.get("interface", "")),
+            comment=str(row.get("comment", "")),
+            disabled=disabled,
+        )
+    for row in lte:
+        name = str(row.get("name", ""))
+        if not name:
+            continue
+        running = as_bool(row.get("running"))
+        disabled = as_bool(row.get("disabled"))
+        result[name] = link(
+            name,
+            kind="lte",
+            status="disabled" if disabled else "connected" if running else "down",
+            up=running and not disabled,
+            address=addr_by_iface.get(name, ""),
+            comment=str(row.get("comment", "")),
+            disabled=disabled,
         )
     return result
 
@@ -420,7 +484,9 @@ def segment_for_ip(ip: str, segments: dict[str, Segment]) -> Segment | None:
     return None
 
 
-_ARP_ONLINE = {"reachable", "delay", "probe", "permanent"}
+# "stale" is a normal resting state for a device that is still there; RouterOS
+# drops the entry (failed/incomplete) once it really stops answering.
+_ARP_ONLINE = {"reachable", "stale", "delay", "probe", "permanent"}
 
 
 def build_clients(
@@ -431,6 +497,7 @@ def build_clients(
     access_list: Iterable[Row],
     segments: dict[str, Segment],
     family_vlan: int,
+    admin_vlan: int = 99,
     exclude_macs: set[str] | None = None,
 ) -> dict[str, Client]:
     exclude_macs = exclude_macs or set()
@@ -484,6 +551,7 @@ def build_clients(
         client.ssid = str(row.get("ssid", ""))
         client.signal_dbm = as_int(row.get("signal") or row.get("signal-strength"))
         client.last_seen_s = 0
+        client.wifi_uptime_s = parse_duration_int(row.get("uptime"))
 
     for row in access_list:
         mac = norm_mac(row.get("mac-address"))
@@ -499,12 +567,15 @@ def build_clients(
         if vlan == family_vlan:
             client.family = True
             client.family_entry_id = str(row.get(".id", ""))
+        elif vlan == admin_vlan:
+            client.admin = True
 
     for mac in list(clients):
         if mac in exclude_macs:
             del clients[mac]
             continue
         client = clients[mac]
+        client.random_mac = is_random_mac(mac)
         seg = segment_for_ip(client.ip, segments) if client.ip else None
         if seg:
             client.segment = seg.key
@@ -543,9 +614,14 @@ def translit(text: str) -> str:
     return "".join(out)
 
 
-def family_comment(name: str, vlan_id: int) -> str:
-    """Comment for a family access-list entry: ASCII, bounded, recognisable."""
+def place_comment(place: str, name: str, vlan_id: int) -> str:
+    """Comment for an access-list entry set from HA: ASCII, bounded."""
     clean = re.sub(r"[^\x20-\x7e]", "", translit(name)).strip()
     clean = clean.replace('"', "'")[:48]
-    label = f"Family: {clean}" if clean else "Family"
+    prefix = {"family": "Family", "admin": "Admin"}.get(place, place.title())
+    label = f"{prefix}: {clean}" if clean else prefix
     return f"{label} -> VLAN {vlan_id} (HA)"
+
+
+def family_comment(name: str, vlan_id: int) -> str:
+    return place_comment("family", name, vlan_id)

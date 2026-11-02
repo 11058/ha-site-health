@@ -44,6 +44,7 @@ class WanLink:
     interface: str
     status: str
     bound: bool
+    kind: str = "dhcp"  # dhcp | pppoe | lte
     address: str = ""
     gateway: str = ""
     comment: str = ""
@@ -126,9 +127,13 @@ class Client:
     last_seen_s: int | None = None
     static_lease: bool = False
     family: bool = False
+    admin: bool = False
     family_entry_id: str = ""
     access_vlan: int | None = None
     wireless: bool = False
+    wifi_uptime_s: int | None = None
+    # Locally administered MAC: a phone's per-network "private address".
+    random_mac: bool = False
 
 
 @dataclass
@@ -140,6 +145,37 @@ class Neighbor:
     platform: str = ""
     board: str = ""
     version: str = ""
+
+
+@dataclass
+class ModemInfo:
+    """A cellular router in front of the core router (Tandem-4GT and alike)."""
+
+    reachable: bool = False
+    error: str = ""
+    connected: bool | None = None
+    connecting: bool = False
+    uptime_s: int | None = None
+    active_sim: int | None = None
+    sim_slots: int | None = None
+    sim_status: str = ""
+    operator: str = ""
+    iccid: str = ""
+    registration: str = ""
+    registered: bool | None = None
+    roaming: bool = False
+    tech: str = ""
+    band: str = ""
+    bandwidth_mhz: float | None = None
+    rsrp: float | None = None
+    rsrq: float | None = None
+    rssi: float | None = None
+    sinr: float | None = None
+    signal_pct: int | None = None
+    cell_id: str = ""
+    temperature: float | None = None
+    # What each slot looked like the last time it was the active one.
+    last_by_slot: dict[str, dict] = field(default_factory=dict)
 
 
 @dataclass

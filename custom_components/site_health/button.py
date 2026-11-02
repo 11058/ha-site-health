@@ -32,3 +32,7 @@ async def async_setup_entry(
         async_add_entities,
         lambda c: [("refresh", lambda: RefreshButton(c))],
     )
+    for sub_id, modem in entry.runtime_data.modems.items():
+        from .modem_entity import modem_buttons
+
+        async_add_entities(modem_buttons(modem), config_subentry_id=sub_id)

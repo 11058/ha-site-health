@@ -150,13 +150,15 @@ def test_clients(parsers, gw):
     assert ha.static_lease and ha.online and ha.segment_kind == "iot"
 
     assert clients["AA:00:00:00:00:04"].online is False  # lease seen 3 days ago
-    assert clients["AA:00:00:00:00:05"].online is False  # stale ARP only
+    # A "stale" ARP entry is a device at rest, not a gone one.
+    assert clients["AA:00:00:00:00:05"].online is True
 
     tablet = clients["AA:00:00:00:00:09"]  # family entry, never seen
     assert tablet.family and not tablet.online and tablet.ip == ""
 
     admin = clients["60:00:00:00:00:99"]
-    assert admin.access_vlan == 99 and not admin.family
+    assert admin.access_vlan == 99 and not admin.family and admin.admin
+    assert not masha.admin
 
     assert "02:00:00:00:01:01" not in clients  # BS is infrastructure
 
@@ -183,3 +185,27 @@ def test_translit(parsers):
         "Family: Planshet detskiy -> VLAN 30 (HA)"
     )
     assert parsers.slug("wan-8.8.8.8") == "wan_8_8_8_8"
+
+
+def test_random_mac(parsers):
+    assert parsers.is_random_mac("6A:DB:A0:EE:10:9D")  # iPhone private address
+    assert parsers.is_random_mac("2A:1B:55:FD:B5:25")
+    assert not parsers.is_random_mac("60:3E:5F:7A:BD:3F")  # hardware MAC
+
+
+def test_wan_kinds(parsers, gw):
+    ifaces = parsers.parse_interfaces(gw["interfaces"])
+    wans = parsers.parse_wans(
+        gw["dhcp_clients"],
+        ifaces,
+        pppoe_clients=[
+            {"name": "pppoe-ISP", "interface": "ether1", "running": "true",
+             "disabled": "false", "comment": "Rostelecom"}
+        ],
+        lte=[{"name": "lte1", "running": "false", "disabled": "false"}],
+        addresses=[{"address": "100.64.1.2/32", "interface": "pppoe-ISP"}],
+    )  # fmt: skip
+    assert wans["pppoe-ISP"].kind == "pppoe" and wans["pppoe-ISP"].bound
+    assert wans["pppoe-ISP"].address == "100.64.1.2"
+    assert wans["lte1"].kind == "lte" and not wans["lte1"].bound
+    assert wans["ether4-WAN1"].kind == "dhcp"

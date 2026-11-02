@@ -31,6 +31,24 @@ def _device_view(coord) -> dict[str, Any]:
     }
 
 
+def _modem_view(coord) -> dict[str, Any]:
+    from .tandem import signal_quality
+
+    data = coord.data
+    info = to_dict(data) if data else None
+    if info:
+        info.pop("iccid", None)
+        info["quality"] = signal_quality(data)
+    return {
+        "subentry_id": coord.subentry_id,
+        "name": coord.device_name,
+        "host": coord.host,
+        "online": coord.last_update_success,
+        "error": coord.last_error,
+        "info": info,
+    }
+
+
 def site_overview(hass: HomeAssistant) -> list[dict[str, Any]]:
     from . import loaded_runtimes
 
@@ -52,6 +70,8 @@ def site_overview(hass: HomeAssistant) -> list[dict[str, Any]]:
                 if site
                 else [],
                 "clients": [to_dict(c) for c in site.clients.values()] if site else [],
+                "admin_vlan": coord.admin_vlan,
+                "modems": [_modem_view(m) for m in runtime.modems.values()],
                 "neighbors": [to_dict(n) for n in site.neighbors.values()]
                 if site
                 else [],
@@ -81,7 +101,7 @@ def ws_subscribe(hass: HomeAssistant, connection, msg: dict) -> None:
         )
 
     for _entry, runtime in loaded_runtimes(hass):
-        for coord in runtime.all():
+        for coord in [*runtime.all(), *runtime.modems.values()]:
             unsubs.append(coord.async_add_listener(_changed))
 
     @callback
@@ -136,7 +156,59 @@ async def ws_family_remove(hass: HomeAssistant, connection, msg: dict) -> None:
     connection.send_result(msg["id"], result)
 
 
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/set_segment",
+        vol.Required("mac"): str,
+        vol.Required("segment"): vol.In(["guest", "family", "admin"]),
+        vol.Optional("name", default=""): str,
+        vol.Optional("entry_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_set_segment(hass: HomeAssistant, connection, msg: dict) -> None:
+    from . import async_set_segment
+
+    try:
+        result = await async_set_segment(
+            hass, msg["mac"], msg["segment"], msg.get("name", ""), msg.get("entry_id")
+        )
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/modem_sim",
+        vol.Required("modem"): str,
+        vol.Required("slot"): vol.In([1, 2]),
+    }
+)
+@websocket_api.async_response
+async def ws_modem_sim(hass: HomeAssistant, connection, msg: dict) -> None:
+    from . import _find_modem
+    from .tandem import TandemError
+
+    try:
+        await _find_modem(hass, msg["modem"]).async_select_sim(msg["slot"])
+    except (HomeAssistantError, TandemError) as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    connection.send_result(msg["id"], {"slot": msg["slot"]})
+
+
 @callback
 def async_register_websocket(hass: HomeAssistant) -> None:
-    for handler in (ws_overview, ws_subscribe, ws_family_add, ws_family_remove):
+    for handler in (
+        ws_overview,
+        ws_subscribe,
+        ws_family_add,
+        ws_family_remove,
+        ws_set_segment,
+        ws_modem_sim,
+    ):
         websocket_api.async_register_command(hass, handler)

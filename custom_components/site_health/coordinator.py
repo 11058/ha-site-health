@@ -12,11 +12,12 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN
+from .const import DOMAIN, SEG_SWITCHES
 from .mikrotik import MikrotikAuthError, MikrotikClient, MikrotikError
-from .models import DeviceSnapshot, InterfaceInfo, SiteSnapshot
+from .models import DeviceSnapshot, InterfaceInfo, ModemInfo, SiteSnapshot
 from .parsers import (
     apply_rates,
     build_clients,
@@ -30,6 +31,7 @@ from .parsers import (
     parse_tunnels,
     parse_wans,
 )
+from .tandem import TandemClient, TandemError, parse_status
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,9 +121,17 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceSnapshot]):
 class SiteCoordinator(DeviceCoordinator):
     """The core router: everything a device has, plus the site-wide view."""
 
-    def __init__(self, *args: Any, family_vlan: int, wg_stale_s: int, **kw: Any):
+    def __init__(
+        self,
+        *args: Any,
+        family_vlan: int,
+        wg_stale_s: int,
+        admin_vlan: int = 99,
+        **kw: Any,
+    ):
         super().__init__(*args, **kw)
         self.family_vlan = family_vlan
+        self.admin_vlan = admin_vlan
         self.wg_stale_s = wg_stale_s
         # MACs of the infrastructure itself, hidden from the client list.
         self.infra_macs: set[str] = set()
@@ -150,6 +160,8 @@ class SiteCoordinator(DeviceCoordinator):
             arp,
             access_list,
             caps,
+            pppoe,
+            lte,
         ) = await asyncio.gather(
             c.vlans(),
             c.addresses(),
@@ -161,8 +173,16 @@ class SiteCoordinator(DeviceCoordinator):
             c.arp(),
             c.wifi_access_list(),
             c.capsman_caps(),
+            c.pppoe_clients(),
+            c.lte(),
         )
-        wans = parse_wans(dhcp_clients, base.interfaces)
+        wans = parse_wans(
+            dhcp_clients,
+            base.interfaces,
+            pppoe_clients=pppoe,
+            lte=lte,
+            addresses=addresses,
+        )
         neighbors = parse_neighbors(neighbors_raw)
         segments = parse_segments(
             addresses, vlans, base.interfaces, exclude_interfaces=set(wans)
@@ -176,8 +196,11 @@ class SiteCoordinator(DeviceCoordinator):
             access_list=access_list,
             segments=segments,
             family_vlan=self.family_vlan,
+            admin_vlan=self.admin_vlan,
             exclude_macs=infra,
         )
+        # Switch management VLAN holds infrastructure, shown with the devices.
+        clients = {m: c for m, c in clients.items() if c.segment_kind != SEG_SWITCHES}
         return SiteSnapshot(
             system=base.system,
             interfaces=base.interfaces,
@@ -190,3 +213,58 @@ class SiteCoordinator(DeviceCoordinator):
             neighbors=neighbors,
             caps=caps,
         )
+
+
+class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
+    """Polls a cellular router (Tandem-4GT) through its LuCI endpoints."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        client: TandemClient,
+        *,
+        name: str,
+        interval_s: int,
+        subentry_id: str,
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=f"{DOMAIN} {name}",
+            update_interval=timedelta(seconds=max(interval_s, 30)),
+        )
+        self.client = client
+        self.device_name = name
+        self.subentry_id = subentry_id
+        self.last_error: str | None = None
+        self._store: Store = Store(hass, 1, f"{DOMAIN}.modem.{subentry_id}")
+        self._restored: ModemInfo | None = None
+
+    @property
+    def host(self) -> str:
+        return self.client.host
+
+    async def async_restore(self) -> None:
+        saved = await self._store.async_load() or {}
+        self._restored = ModemInfo(last_by_slot=saved.get("last_by_slot", {}))
+
+    async def _async_update_data(self) -> ModemInfo:
+        try:
+            out = await self.client.status()
+        except TandemError as err:
+            self.last_error = str(err)
+            raise UpdateFailed(str(err)) from err
+        info = parse_status(out, self.data or self._restored)
+        self.last_error = None
+        previous = (self.data or self._restored or ModemInfo()).last_by_slot
+        if info.last_by_slot != previous:
+            self._store.async_delay_save(
+                lambda: {"last_by_slot": info.last_by_slot}, 60
+            )
+        return info
+
+    async def async_select_sim(self, slot: int) -> None:
+        await self.client.select_sim(slot)
+        await self.async_request_refresh()
