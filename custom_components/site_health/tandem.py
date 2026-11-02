@@ -80,7 +80,9 @@ class TandemClient:
         except (ClientError, TimeoutError, OSError) as err:
             raise TandemError(f"{self._host}: {err}") from err
 
-    async def _get_json(self, path: str, *, retry: bool = True) -> dict[str, Any]:
+    async def _get_json(
+        self, path: str, *, retry: bool = True, timeout: float | None = None
+    ) -> dict[str, Any]:
         if self._cookie is None:
             await self.login()
         try:
@@ -88,18 +90,20 @@ class TandemClient:
                 f"{self._base}/{path}",
                 cookies={"sysauth": self._cookie or ""},
                 allow_redirects=False,
-                timeout=self._timeout,
+                timeout=ClientTimeout(total=timeout) if timeout else self._timeout,
             ) as resp:
                 text = await resp.text()
                 status = resp.status
-        except (ClientError, TimeoutError, OSError) as err:
+        except TimeoutError as err:
+            raise TandemError(f"{self._host}: no answer in time") from err
+        except (ClientError, OSError) as err:
             raise TandemError(f"{self._host}: {err}") from err
         # An expired session answers with the login page (200 HTML or 403).
         if status in (302, 403) or text.lstrip().startswith("<"):
             if not retry:
                 raise TandemAuthError("session rejected after a fresh login")
             self._cookie = None
-            return await self._get_json(path, retry=False)
+            return await self._get_json(path, retry=False, timeout=timeout)
         try:
             data = json.loads(text)
         except ValueError as err:
@@ -127,7 +131,8 @@ class TandemClient:
             kind = "ucs2"
             payload = "".join(f"{ord(ch):04X}" for ch in text)
         query = urlencode({"text": payload, "phone": phone})
-        data = await self._get_json(f"{SMS_SEND.format(kind=kind)}?{query}")
+        # Sending waits for the network's acknowledgement: allow for it.
+        data = await self._get_json(f"{SMS_SEND.format(kind=kind)}?{query}", timeout=90)
         if data.get("code") != 0:
             raise TandemError(f"SMS not sent (code {data.get('code')})")
 

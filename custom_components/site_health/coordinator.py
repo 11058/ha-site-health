@@ -259,6 +259,7 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
         self._store: Store = Store(hass, 1, f"{DOMAIN}.modem.{subentry_id}")
         self._saved: dict[str, Any] = {}
         self._slow_at = 0.0
+        self._last_auto = 0.0
 
     @property
     def host(self) -> str:
@@ -293,7 +294,9 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
             request
             and self.balance_hours
             and (asked is None or now - asked > self.balance_hours * 3600)
+            and now - self._last_auto > 3600
         ):
+            self._last_auto = now
             await self._request_balance(request)
             waiting = True
         if waiting or now - self._slow_at > self.SLOW_EVERY_S:
@@ -331,13 +334,14 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
 
     async def _request_balance(self, request: tuple[str, str]) -> None:
         number, text = request
+        # Recorded before sending: the modem may send the SMS and still time
+        # out on the reply, and a retry every poll would flood the operator.
+        self._saved["balance_requested"] = time.time()
+        self._save()
         try:
             await self.client.send_sms(number, text)
         except TandemError as err:
-            _LOGGER.warning("Balance request SMS not sent: %s", err)
-            return
-        self._saved["balance_requested"] = time.time()
-        self._save()
+            _LOGGER.warning("Balance request SMS may not have been sent: %s", err)
 
     async def async_request_balance(self) -> None:
         info = self.data
