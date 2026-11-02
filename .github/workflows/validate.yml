@@ -65,7 +65,7 @@ jobs:
           import importlib, sys
           sys.path.insert(0, ".")
           modules = [
-              "const", "models", "parsers", "mikrotik", "tandem", "coordinator", "dynamic",
+              "const", "models", "parsers", "uplinks", "mikrotik", "tandem", "coordinator", "dynamic",
               "entity", "modem_entity", "ssc_switch", "switch_entity", "config_flow", "sensor", "binary_sensor", "button",
               "websocket_api", "panel", "provision", "diagnostics", "",
           ]

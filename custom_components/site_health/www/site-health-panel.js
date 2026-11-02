@@ -17,10 +17,11 @@ const SEG_LABEL = Object.fromEntries(SEGMENTS);
 const SEG_BY_VLAN = { 10: "управление", 11: "NVR", 12: "камеры", 20: "умный дом",
   30: "семья", 40: "гости", 50: "DMZ", 64: "ASIC", 99: "админ" };
 const PLACE_LABEL = { family: "домашние", admin: "админы", guest: "гости" };
-const WAN_KIND = { dhcp: "DHCP", pppoe: "PPPoE", lte: "LTE" };
+const WAN_KIND = { dhcp: "DHCP", pppoe: "PPPoE", lte: "LTE (модем)", static: "статический" };
+const ROLE = { active: "активный", backup: "резерв", pbr: "по правилам", "no-route": "без маршрута" };
 const WAN_STATUS = { bound: "подключён", searching: "поиск DHCP", "searching...": "поиск DHCP",
   requesting: "запрос адреса", rebinding: "продление", stopped: "остановлен",
-  connected: "подключён", down: "нет связи", disabled: "выключен" };
+  connected: "подключён", down: "нет связи", disabled: "выключен", up: "работает" };
 
 const esc = (v) =>
   String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -306,16 +307,40 @@ class SiteHealthPanel extends HTMLElement {
       ${this._clients(s)}`;
   }
 
+  _lteLine(l) {
+    if (!l) return "";
+    const [qc, ql] = QUALITY[l.quality || "unknown"];
+    return `<div class="sub">📶 ${esc(l.operator || "")} ${esc(l.tech || "")} ${esc(l.band || "")} ·
+      <span class="${qc}">RSRP ${l.rsrp ?? "—"} · SINR ${l.sinr ?? "—"} (${ql})</span></div>`;
+  }
+
   _channels(s) {
     const modemHosts = Object.fromEntries((s.modems || []).map((m) => [m.host, m.name]));
-    const wans = s.wans.map((w) => `
+    const devByHost = Object.fromEntries(s.devices.map((d) => [d.host, d]));
+    const order = { active: 0, backup: 1, pbr: 2, "no-route": 3 };
+    const wans = [...s.wans].sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9)).map((w) => {
+      const viaHost = (w.routes || []).map((r) => r.gateway).find((g) => devByHost[g]) || w.gateway;
+      const box = devByHost[viaHost];
+      const boxLte = box && box.lte ? Object.values(box.lte)[0] : null;
+      const via = modemHosts[w.gateway] ? `через ${esc(modemHosts[w.gateway])}`
+        : box ? `через ${esc(box.name)}` : "";
+      const routes = (w.routes || []).map((r) => `<span class="${r.active ? "" : "sub"}">${esc(r.table)}${
+        r.distance > 1 ? ` d${r.distance}` : ""}${r.active ? " ✓" : ""}</span>`).join(" · ");
+      return `
       <tr>
         <td>${dot(w.disabled ? null : w.bound)} ${esc(w.comment || w.interface)}
-          <div class="sub">${esc(WAN_KIND[w.kind] || w.kind)} · ${esc(w.interface)}${
-            modemHosts[w.gateway] ? ` · через ${esc(modemHosts[w.gateway])}` : ""}</div></td>
+          <span class="role ${esc(w.role)}">${ROLE[w.role] || ""}</span>
+          <div class="sub">${esc(WAN_KIND[w.kind] || w.kind)} · ${esc(w.interface)}${via ? ` · ${via}` : ""}</div>
+          ${routes ? `<div class="sub">маршруты: ${routes}</div>` : ""}
+          ${this._lteLine(w.lte || boxLte)}</td>
         <td>${esc(w.disabled ? "отключён" : (WAN_STATUS[w.status] || w.status))}<div class="sub">${esc(w.address)}</div></td>
         <td class="num">↓ ${mbps(w.rx_bps)}<br>↑ ${mbps(w.tx_bps)}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
+    const rules = (s.route_rules || []).map((r) => `
+      <tr class="${r.disabled ? "off" : ""}"><td>${esc(r.comment || r.match)}<div class="sub">${esc(r.match)}</div></td>
+        <td>→ ${esc(r.table)}</td><td class="num">${r.disabled ? '<span class="warn">выкл</span>' : "вкл"}</td></tr>`).join("");
+    const svc = (s.service_routes || []).map((r) => `${esc(r.table)} → ${esc(r.gateway)}`).join(" · ");
     // Probes of switches and management devices are shown under "Devices".
     const infraNets = s.segments.filter((g) => g.kind === "switches" || g.kind === "mgmt")
       .map((g) => g.network);
@@ -323,7 +348,7 @@ class SiteHealthPanel extends HTMLElement {
       .filter((p) => !s.devices.some((d) => d.host === p.host))
       .map((p) => `
       <tr>
-        <td>${dot(p.up)} ${esc(p.name)}</td>
+        <td>${dot(p.up)} ${esc(p.name)}${p.down_script ? ' <span class="sub" title="' + esc(p.down_script) + '">⚙ скрипт</span>' : ""}</td>
         <td class="sub">${esc(p.host)}</td>
         <td class="num">${p.rtt_ms !== null ? `${p.rtt_ms.toFixed(1)} мс` : ""}${
           p.loss_pct ? `<div class="sub bad">потери ${p.loss_pct}%</div>` : ""}</td>
@@ -338,6 +363,8 @@ class SiteHealthPanel extends HTMLElement {
       <section class="card">
         <h2>Каналы связи</h2>
         <table>${wans}${tunnels}</table>
+        ${rules ? `<h3>Распределение трафика (PBR)</h3><table>${rules}</table>` : ""}
+        ${svc ? `<div class="sub" style="margin-top:8px">служебные маршруты: ${svc}</div>` : ""}
         ${probes ? `<h3>Проверки (netwatch)</h3><table>${probes}</table>` : ""}
       </section>`;
   }
@@ -407,8 +434,15 @@ class SiteHealthPanel extends HTMLElement {
           <td class="num">${sys.cpu_load ?? "—"}% CPU${
             sys.temperature !== null && sys.temperature !== undefined ? `<br>${sys.temperature} °C` : ""}</td>
           <td class="num sub">${d.online ? `up ${dur(sys.uptime_s)}` : esc(d.error || "нет связи")}</td>
-        </tr>`;
+        </tr>${d.lte && Object.keys(d.lte).length ? `<tr><td colspan="4">${this._lteLine(Object.values(d.lte)[0])}</td></tr>` : ""}`;
     };
+    const caps = (s.caps || []).map((c) => `
+        <tr>
+          <td>${dot(String(c.state || "").toLowerCase().startsWith("run") || c.state === undefined ? true : null)} <b>${esc(c.identity || c.name || "")}</b>
+            <div class="sub">точка доступа (CAP) · ${esc(String(c.address || "").split("/")[0])}</div></td>
+          <td class="sub">${esc(c.board || c.model || "")}<br>${esc(c.version || "")}</td>
+          <td colspan="2" class="num sub">${esc(c.state || "")}</td>
+        </tr>`).join("");
     const switchNets = s.segments.filter((g) => g.kind === "switches").map((g) => g.network);
     const known = new Set([s.core.host, ...s.devices.map((d) => d.host),
       ...(s.switches || []).map((w) => w.host)]);
@@ -427,6 +461,7 @@ class SiteHealthPanel extends HTMLElement {
         <table>
           ${row(s.core, "главный роутер")}
           ${s.devices.map((d) => row(d, "MikroTik")).join("")}
+          ${caps}
           ${extra}
         </table>
       </section>`;
@@ -590,7 +625,7 @@ class SiteHealthPanel extends HTMLElement {
           <td>${this._nameCell(s, c, name)}
             <div class="sub">${esc(c.mac)}${c.random_mac ? " · частный MAC" : ""}${c.static_lease ? " · статика" : ""}</div>${waiting}</td>
           <td>${esc(c.ip || "—")}<div class="sub">${esc(SEG_LABEL[c.segment_kind] || "")}</div></td>
-          <td class="sub c-if">${c.wireless ? `📶 ${esc(c.ssid || c.wifi_interface)}` : esc(c.interface || "")}</td>
+          <td class="sub c-if">${c.wireless ? `📶 ${esc(c.ssid || c.wifi_interface)}${(s.caps || []).length && c.ap ? `<div>${esc(c.ap)}</div>` : ""}` : esc(c.interface || "")}</td>
           <td class="num c-sig ${signalClass(c.signal_dbm)}">${c.signal_dbm ?? ""}</td>
           <td class="num sub">${c.online ? (c.wifi_uptime_s !== null && c.wifi_uptime_s !== undefined ? `${dur(c.wifi_uptime_s)}` : "в сети")
             : c.last_seen_s !== null ? `${dur(c.last_seen_s)} назад` : "не видели"}</td>
@@ -897,6 +932,9 @@ const STYLE = `
     border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 13px; margin: 2px 0 2px 4px; }
   .act.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
   .act[disabled] { opacity: .5; cursor: not-allowed; }
+  .role { font-size: 11px; padding: 1px 7px; border-radius: 9px; margin-left: 4px; border: 1px solid var(--divider-color); color: var(--secondary-text-color); }
+  .role.active { color: var(--success-color, #2e7d32); border-color: var(--success-color, #2e7d32); }
+  .role.backup { color: var(--primary-color); border-color: var(--primary-color); }
   .pen { border: none; background: transparent; color: var(--secondary-text-color); cursor: pointer; font-size: 13px; padding: 0 4px; }
   .nm { width: 180px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--divider-color);
     background: var(--secondary-background-color); color: var(--primary-text-color); }

@@ -326,6 +326,18 @@
       },
       "clients_asic": {
         "name": "Clients: ASIC"
+      },
+      "active_uplink": {
+        "name": "Active uplink"
+      },
+      "lte_rsrp": {
+        "name": "{lte} RSRP"
+      },
+      "lte_sinr": {
+        "name": "{lte} SINR"
+      },
+      "lte_operator": {
+        "name": "{lte} operator"
       }
     },
     "binary_sensor": {

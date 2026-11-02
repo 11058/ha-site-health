@@ -330,10 +330,17 @@ async def async_set_segment(
     site = runtime.site
     managed = {site.family_vlan, site.admin_vlan}
     target = _vlan_for(site, place)
+    legacy = bool(site.site and site.site.wifi_backend == "wireless")
+    cl = site.client
+    acl_list = cl.wireless_access_list if legacy else cl.wifi_access_list
+    acl_add = cl.add_wireless_access if legacy else cl.add_wifi_access
+    acl_set = cl.set_wireless_access if legacy else cl.set_wifi_access
+    acl_del = cl.remove_wireless_access if legacy else cl.remove_wifi_access
+    kick = cl.kick_wireless_client if legacy else cl.kick_wifi_client
     try:
         rows = [
             r
-            for r in await site.client.wifi_access_list()
+            for r in await acl_list()
             if norm_mac(r.get("mac-address")) == mac and r.get(".id")
         ]
         foreign = [r for r in rows if as_int(r.get("vlan-id")) not in managed]
@@ -345,28 +352,22 @@ async def async_set_segment(
         current = [r for r in rows if as_int(r.get("vlan-id")) in managed]
         if target is None:
             for row in current:
-                await site.client.remove_wifi_access(row[".id"])
+                await acl_del(row[".id"])
             status = "guest" if current else "already_guest"
         elif current and as_int(current[0].get("vlan-id")) == target:
             status = f"already_{place}"
         elif current:
-            await site.client.set_wifi_access(
+            await acl_set(
                 current[0][".id"],
                 {"vlan-id": str(target), "comment": place_comment(place, name, target)},
             )
             for extra in current[1:]:
-                await site.client.remove_wifi_access(extra[".id"])
+                await acl_del(extra[".id"])
             status = place
         else:
-            await site.client.add_wifi_access(
-                mac, target, place_comment(place, name, target)
-            )
+            await acl_add(mac, target, place_comment(place, name, target))
             status = place
-        kicked = (
-            await site.client.kick_wifi_client(mac)
-            if not status.startswith("already")
-            else 0
-        )
+        kicked = await kick(mac) if not status.startswith("already") else 0
     except MikrotikError as err:
         raise HomeAssistantError(f"Router refused the change: {err}") from err
     await site.async_refresh()  # the panel re-reads right after this

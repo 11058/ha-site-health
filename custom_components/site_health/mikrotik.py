@@ -157,6 +157,41 @@ class MikrotikClient:
     async def lte(self) -> list[dict]:
         return await self._list("interface/lte", optional=True)
 
+    async def interface_list_members(self) -> list[dict]:
+        return await self._list("interface/list/member", optional=True)
+
+    async def default_routes(self) -> list[dict]:
+        return await self._list("ip/route?dst-address=0.0.0.0/0", optional=True)
+
+    async def host_route(self, ip: str) -> list[dict]:
+        return await self._list(f"ip/route?dst-address={ip}/32", optional=True)
+
+    async def routing_mangle(self) -> list[dict]:
+        return await self._list("ip/firewall/mangle?action=mark-routing", optional=True)
+
+    async def lte_monitor(self, name: str) -> dict:
+        try:
+            data = await self._request(
+                "POST", "interface/lte/monitor", {"numbers": name, "once": ""}
+            )
+        except MikrotikAuthError:
+            raise
+        except MikrotikError:
+            return {}
+        if isinstance(data, list):
+            return data[0] if data else {}
+        return data if isinstance(data, dict) else {}
+
+    # legacy wireless package (RB951 and other pre-wifiwave2 boards)
+    async def wireless_interfaces(self) -> list[dict]:
+        return await self._list("interface/wireless", optional=True)
+
+    async def wireless_registrations(self) -> list[dict]:
+        return await self._list("interface/wireless/registration-table", optional=True)
+
+    async def wireless_access_list(self) -> list[dict]:
+        return await self._list("interface/wireless/access-list", optional=True)
+
     async def netwatch(self) -> list[dict]:
         return await self._list("tool/netwatch", optional=True)
 
@@ -213,6 +248,37 @@ class MikrotikClient:
         await self._request(
             "PATCH", f"ip/dhcp-server/lease/{lease_id}", {"comment": comment}
         )
+
+    async def add_wireless_access(self, mac: str, vlan_id: int, comment: str) -> None:
+        """Legacy wireless: per-MAC VLAN is vlan-mode=use-tag on the access list."""
+        await self._request(
+            "PUT",
+            "interface/wireless/access-list",
+            {"mac-address": mac, "vlan-mode": "use-tag", "vlan-id": str(vlan_id),
+             "comment": comment},
+        )  # fmt: skip
+
+    async def set_wireless_access(self, entry_id: str, fields: dict[str, str]) -> None:
+        await self._request(
+            "PATCH", f"interface/wireless/access-list/{entry_id}", fields
+        )
+
+    async def remove_wireless_access(self, entry_id: str) -> None:
+        await self._request("DELETE", f"interface/wireless/access-list/{entry_id}")
+
+    async def kick_wireless_client(self, mac: str) -> int:
+        kicked = 0
+        for reg in await self.wireless_registrations():
+            if reg.get("mac-address", "").upper() != mac.upper() or not reg.get(".id"):
+                continue
+            try:
+                await self._request(
+                    "DELETE", f"interface/wireless/registration-table/{reg['.id']}"
+                )
+                kicked += 1
+            except MikrotikError as err:
+                _LOGGER.debug("kick %s failed: %s", mac, err)
+        return kicked
 
     async def kick_wifi_client(self, mac: str) -> int:
         """Drop a client's association so it reconnects and gets the new VLAN."""

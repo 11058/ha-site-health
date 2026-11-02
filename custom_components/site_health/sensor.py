@@ -163,6 +163,35 @@ def _radio_sensors(c: DeviceCoordinator) -> Iterable[tuple[str, Callable]]:
             )  # fmt: skip
 
 
+def _lte_sensors(c: DeviceCoordinator) -> Iterable[tuple[str, Callable]]:
+    """Signal of every LTE modem of the device (USB stick, LTE box)."""
+    data = c.data
+    if data is None:
+        return
+    dbm = {
+        "native_unit_of_measurement": SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        "device_class": SensorDeviceClass.SIGNAL_STRENGTH,
+        "state_class": SensorStateClass.MEASUREMENT,
+    }
+    for iface in data.lte:
+        ph = {"lte": iface}
+        key = slug(iface)
+        yield f"lte_{key}_rsrp", lambda i=iface, k=key, ph=ph: SiteSensor(
+            c, f"lte_{k}_rsrp", lambda d, i=i: d.lte[i]["rsrp"],
+            translation_key="lte_rsrp", placeholders=ph, **dbm,
+            attrs_fn=lambda d, i=i: dict(d.lte[i]),
+        )  # fmt: skip
+        yield f"lte_{key}_sinr", lambda i=iface, k=key, ph=ph: SiteSensor(
+            c, f"lte_{k}_sinr", lambda d, i=i: d.lte[i]["sinr"],
+            translation_key="lte_sinr", placeholders=ph,
+            native_unit_of_measurement="dB", state_class=SensorStateClass.MEASUREMENT,
+        )  # fmt: skip
+        yield f"lte_{key}_operator", lambda i=iface, k=key, ph=ph: SiteSensor(
+            c, f"lte_{k}_operator", lambda d, i=i: d.lte[i]["operator"] or None,
+            translation_key="lte_operator", placeholders=ph,
+        )  # fmt: skip
+
+
 def _site_sensors(c: DeviceCoordinator) -> Iterable[tuple[str, Callable]]:
     data = c.data
     if not isinstance(data, SiteSnapshot):
@@ -186,6 +215,18 @@ def _site_sensors(c: DeviceCoordinator) -> Iterable[tuple[str, Callable]]:
                     translation_key=f"wan_{dr}", placeholders=ph, **MBPS,
                 )
             )  # fmt: skip
+    yield "active_uplink", lambda: SiteSensor(
+        c, "active_uplink",
+        lambda d: next(
+            (w.comment or w.interface for w in d.wans.values() if w.role == "active"),
+            "none",
+        ),
+        translation_key="active_uplink",
+        attrs_fn=lambda d: {
+            w.interface: {"kind": w.kind, "role": w.role, "up": w.bound}
+            for w in d.wans.values()
+        },
+    )  # fmt: skip
     for key, probe in data.probes.items():
         ph = {"probe": probe.name}
         if probe.rtt_ms is None:  # "simple" netwatch type has no RTT
@@ -253,6 +294,7 @@ async def async_setup_entry(
     def builder(c: DeviceCoordinator):
         yield from _device_sensors(c)
         yield from _radio_sensors(c)
+        yield from _lte_sensors(c)
         yield from _site_sensors(c)
 
     setup_dynamic(entry, runtime.all(), async_add_entities, builder)

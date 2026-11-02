@@ -28,6 +28,7 @@ def _device_view(coord) -> dict[str, Any]:
         "system": to_dict(data.system) if data else None,
         "interfaces": [to_dict(i) for i in data.interfaces.values()] if data else [],
         "radio_links": [to_dict(r) for r in data.radio_links.values()] if data else [],
+        "lte": data.lte if data else {},
     }
 
 
@@ -87,6 +88,12 @@ def site_overview(hass: HomeAssistant) -> list[dict[str, Any]]:
                 if site
                 else [],
                 "admin_vlan": coord.admin_vlan,
+                "service_routes": [to_dict(r) for r in site.service_routes]
+                if site
+                else [],
+                "route_rules": [to_dict(r) for r in site.route_rules] if site else [],
+                "caps": site.caps if site else [],
+                "wifi_backend": site.wifi_backend if site else "",
                 "modems": [_modem_view(m) for m in runtime.modems.values()],
                 "switches": [_switch_view(w) for w in runtime.switches.values()],
                 "neighbors": [to_dict(n) for n in site.neighbors.values()]

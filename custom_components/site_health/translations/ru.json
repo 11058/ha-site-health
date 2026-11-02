@@ -326,6 +326,18 @@
       },
       "clients_asic": {
         "name": "Клиенты: ASIC"
+      },
+      "active_uplink": {
+        "name": "Активный канал"
+      },
+      "lte_rsrp": {
+        "name": "{lte} RSRP"
+      },
+      "lte_sinr": {
+        "name": "{lte} SINR"
+      },
+      "lte_operator": {
+        "name": "{lte} оператор"
       }
     },
     "binary_sensor": {

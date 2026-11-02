@@ -39,6 +39,7 @@ from .tandem import (
     parse_balance,
     parse_status,
 )
+from .uplinks import attach_routes, parse_lte_monitor, parse_route_rules
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,6 +100,9 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceSnapshot]):
             health,
             ifaces_raw,
             registrations,
+            legacy_regs,
+            legacy_ifaces,
+            lte_ifaces,
         ) = await asyncio.gather(
             c.identity(),
             c.resource(),
@@ -106,18 +110,45 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceSnapshot]):
             c.health(),
             c.interfaces(),
             c.wifi_registrations(),
+            c.wireless_registrations(),
+            c.wireless_interfaces(),
+            c.lte(),
         )
+        # Legacy wireless (e.g. RB951) reports the same facts under other
+        # names; fold it into the wifiwave2 shape the parsers expect.
+        ssid_of = {str(w.get("name")): str(w.get("ssid", "")) for w in legacy_ifaces}
+        for reg in legacy_regs:
+            registrations.append(
+                {
+                    **reg,
+                    "ssid": ssid_of.get(str(reg.get("interface")), ""),
+                    "signal": reg.get("signal-strength"),
+                    "legacy": True,
+                }
+            )
         now = time.monotonic()
         ifaces = parse_interfaces(ifaces_raw)
         elapsed = now - self._prev_time if self._prev_time else None
         apply_rates(ifaces, self._prev_ifaces, elapsed)
         self._prev_ifaces, self._prev_time = ifaces, now
+        lte_signal: dict[str, dict[str, Any]] = {}
+        for row in lte_ifaces:
+            name = str(row.get("name", ""))
+            if name and str(row.get("disabled")) != "true":
+                mon = await c.lte_monitor(name)
+                if mon:
+                    lte_signal[name] = parse_lte_monitor(mon)
         snap = DeviceSnapshot(
             system=parse_system(identity, resource, routerboard, health),
             interfaces=ifaces,
+            lte=lte_signal,
         )
         self.last_error = None
-        return snap, {"registrations": registrations}
+        return snap, {
+            "registrations": registrations,
+            "lte": lte_ifaces,
+            "legacy_wifi": bool(legacy_ifaces),
+        }
 
     async def _fetch(self) -> DeviceSnapshot:
         snap, raw = await self._common()
@@ -203,9 +234,12 @@ class SiteCoordinator(DeviceCoordinator):
             leases,
             arp,
             access_list,
+            legacy_access,
             caps,
             pppoe,
-            lte,
+            members,
+            default_routes,
+            mangle,
         ) = await asyncio.gather(
             c.vlans(),
             c.addresses(),
@@ -216,17 +250,45 @@ class SiteCoordinator(DeviceCoordinator):
             c.leases(),
             c.arp(),
             c.wifi_access_list(),
+            c.wireless_access_list(),
             c.capsman_caps(),
             c.pppoe_clients(),
-            c.lte(),
+            c.interface_list_members(),
+            c.default_routes(),
+            c.routing_mangle(),
         )
+        lte = raw["lte"]
+        wan_lists = {
+            str(m.get("list"))
+            for m in members
+            if "wan" in str(m.get("list", "")).lower()
+        }
+        wan_members = [m for m in members if str(m.get("list")) in wan_lists]
         wans = parse_wans(
             dhcp_clients,
             base.interfaces,
             pppoe_clients=pppoe,
             lte=lte,
             addresses=addresses,
+            wan_members=wan_members,
         )
+        # Recursive default routes ("via 77.88.8.8"): fetch their /32 hops.
+        hops: list[dict] = []
+        for gw in {
+            str(r.get("gateway", ""))
+            for r in default_routes
+            if not r.get("immediate-gw") or str(r.get("active")) != "true"
+        }:
+            if gw.count(".") == 3 and "%" not in gw:
+                hops += await c.host_route(gw)
+        static_cidrs = {
+            str(a.get("interface")): str(a.get("address"))
+            for a in addresses
+            if str(a.get("interface")) in wans
+        }
+        service_routes = attach_routes(wans, default_routes, hops, static_cidrs)
+        for name, link in wans.items():
+            link.lte = base.lte.get(name)
         neighbors = parse_neighbors(neighbors_raw)
         segments = parse_segments(
             addresses, vlans, base.interfaces, exclude_interfaces=set(wans)
@@ -237,12 +299,20 @@ class SiteCoordinator(DeviceCoordinator):
             leases=leases,
             arp=arp,
             registrations=raw["registrations"],
-            access_list=access_list,
+            access_list=[*access_list, *legacy_access],
             segments=segments,
             family_vlan=self.family_vlan,
             admin_vlan=self.admin_vlan,
             exclude_macs=infra,
         )
+        # Wi-Fi clients: which access point (a CAP's "<identity>-2g" radio, or
+        # the router itself).
+        cap_ids = {str(cp.get("identity", "")) for cp in caps if cp.get("identity")}
+        for client in clients.values():
+            if not client.wireless:
+                continue
+            head = client.wifi_interface.rsplit("-", 1)[0]
+            client.ap = head if head in cap_ids else base.system.identity
         await self._sync_names(clients)
         # Switch management VLAN holds infrastructure, shown with the devices.
         clients = {m: c for m, c in clients.items() if c.segment_kind != SEG_SWITCHES}
@@ -257,6 +327,10 @@ class SiteCoordinator(DeviceCoordinator):
             clients=clients,
             neighbors=neighbors,
             caps=caps,
+            service_routes=service_routes,
+            route_rules=parse_route_rules(mangle),
+            wifi_backend="wireless" if raw["legacy_wifi"] else "wifi",
+            lte=base.lte,
         )
 
 

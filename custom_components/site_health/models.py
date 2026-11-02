@@ -37,21 +37,10 @@ class InterfaceInfo:
     tx_bps: float | None = None
 
 
-@dataclass
-class WanLink:
-    """An uplink: a DHCP client on a WAN port (for now)."""
+# An uplink of any kind; see uplinks.py.
+from .uplinks import RouteRule, ServiceRoute, Uplink  # noqa: E402
 
-    interface: str
-    status: str
-    bound: bool
-    kind: str = "dhcp"  # dhcp | pppoe | lte
-    address: str = ""
-    gateway: str = ""
-    comment: str = ""
-    disabled: bool = False
-    running: bool = False
-    rx_bps: float | None = None
-    tx_bps: float | None = None
+WanLink = Uplink
 
 
 @dataclass
@@ -66,6 +55,8 @@ class Probe:
     rtt_ms: float | None = None
     loss_pct: float | None = None
     disabled: bool = False
+    up_script: str = ""
+    down_script: str = ""
 
 
 @dataclass
@@ -133,6 +124,7 @@ class Client:
     access_vlan: int | None = None
     wireless: bool = False
     wifi_uptime_s: int | None = None
+    ap: str = ""  # access point (CAP identity or the router) for Wi-Fi clients
     # Locally administered MAC: a phone's per-network "private address".
     random_mac: bool = False
 
@@ -192,6 +184,8 @@ class DeviceSnapshot:
     system: SystemInfo = field(default_factory=SystemInfo)
     interfaces: dict[str, InterfaceInfo] = field(default_factory=dict)
     radio_links: dict[str, RadioLink] = field(default_factory=dict)
+    # LTE modems of this device (interface -> signal), e.g. an LTE box.
+    lte: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -205,6 +199,10 @@ class SiteSnapshot(DeviceSnapshot):
     clients: dict[str, Client] = field(default_factory=dict)
     neighbors: dict[str, Neighbor] = field(default_factory=dict)
     caps: list[dict[str, Any]] = field(default_factory=list)
+    service_routes: list[ServiceRoute] = field(default_factory=list)
+    route_rules: list[RouteRule] = field(default_factory=list)
+    # "wifi" (wifiwave2) or "wireless" (legacy, e.g. RB951) or "" (none)
+    wifi_backend: str = ""
 
 
 def to_dict(obj: Any) -> Any:

@@ -29,6 +29,7 @@ from .models import (
     Tunnel,
     WanLink,
 )
+from .uplinks import build_uplinks
 
 Row = dict[str, Any]
 
@@ -230,78 +231,23 @@ def parse_wans(
     pppoe_clients: Iterable[Row] = (),
     lte: Iterable[Row] = (),
     addresses: Iterable[Row] = (),
+    wan_members: Iterable[Row] = (),
 ) -> dict[str, WanLink]:
-    """Uplinks: DHCP clients on WAN ports, PPPoE clients, LTE modems."""
-    addr_by_iface: dict[str, str] = {}
-    for row in addresses:
-        if as_bool(row.get("disabled")) or as_bool(row.get("invalid")):
-            continue
-        addr_by_iface.setdefault(
-            str(row.get("interface", "")), str(row.get("address", "")).split("/")[0]
-        )
-
-    def link(iface: str, *, kind: str, status: str, up: bool, **kw) -> WanLink:
-        info = interfaces.get(iface)
-        return WanLink(
-            interface=iface,
-            kind=kind,
-            status=status,
-            bound=up,
-            comment=kw.pop("comment", "") or (info.comment if info else ""),
-            running=info.running if info else False,
-            rx_bps=info.rx_bps if info else None,
-            tx_bps=info.tx_bps if info else None,
-            **kw,
-        )
-
-    result: dict[str, WanLink] = {}
-    for row in dhcp_clients:
-        iface = str(row.get("interface", ""))
-        if not iface:
-            continue
-        status = str(row.get("status", "")) or "unknown"
-        result[iface] = link(
-            iface,
-            kind="dhcp",
-            status=status,
-            up=status == "bound",
-            address=str(row.get("address", "")).split("/")[0],
-            gateway=str(row.get("gateway", "")),
-            comment=str(row.get("comment", "")),
-            disabled=as_bool(row.get("disabled")),
-        )
-    for row in pppoe_clients:
-        name = str(row.get("name", ""))
-        if not name:
-            continue
-        running = as_bool(row.get("running"))
-        disabled = as_bool(row.get("disabled"))
-        result[name] = link(
-            name,
-            kind="pppoe",
-            status="disabled" if disabled else "connected" if running else "down",
-            up=running and not disabled,
-            address=addr_by_iface.get(name, ""),
-            gateway=str(row.get("interface", "")),
-            comment=str(row.get("comment", "")),
-            disabled=disabled,
-        )
-    for row in lte:
-        name = str(row.get("name", ""))
-        if not name:
-            continue
-        running = as_bool(row.get("running"))
-        disabled = as_bool(row.get("disabled"))
-        result[name] = link(
-            name,
-            kind="lte",
-            status="disabled" if disabled else "connected" if running else "down",
-            up=running and not disabled,
-            address=addr_by_iface.get(name, ""),
-            comment=str(row.get("comment", "")),
-            disabled=disabled,
-        )
-    return result
+    """Uplinks of every kind (see uplinks.py), with traffic rates."""
+    ups = build_uplinks(
+        dhcp_clients=dhcp_clients,
+        pppoe_clients=pppoe_clients,
+        lte=lte,
+        addresses=addresses,
+        running={n: i.running for n, i in interfaces.items()},
+        comments={n: i.comment for n, i in interfaces.items() if i.comment},
+        wan_members=wan_members,
+    )
+    for name, link in ups.items():
+        info = interfaces.get(name)
+        if info:
+            link.rx_bps, link.tx_bps = info.rx_bps, info.tx_bps
+    return ups
 
 
 def parse_probes(rows: Iterable[Row]) -> dict[str, Probe]:
@@ -322,6 +268,8 @@ def parse_probes(rows: Iterable[Row]) -> dict[str, Probe]:
             rtt_ms=parse_rtt_ms(row.get("rtt-avg")),
             loss_pct=as_float(row.get("loss-percent")),
             disabled=as_bool(row.get("disabled")),
+            up_script=str(row.get("up-script", ""))[:120],
+            down_script=str(row.get("down-script", ""))[:120],
         )
     return result
 
