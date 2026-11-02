@@ -24,6 +24,7 @@ _LOGGER = logging.getLogger(__name__)
 USERNAME = "ha-infra"
 GROUP = "ha-infra"
 CERT = "site-health-rest"
+KEY_USAGE = "digital-signature,key-encipherment,tls-server,key-cert-sign"
 COMMENT_TAG = "site-health"
 
 _DENY = "!local,!telnet,!ssh,!ftp,!reboot,!policy,!test,!winbox,!password,!web,!sniff,!sensitive,!romon"
@@ -44,7 +45,10 @@ def onboarding_script(*, ha_ip: str, password: str, core: bool) -> str:
     policy = POLICY_CORE if core else POLICY_DEVICE
     lines = [
         f"# Site Health: access for Home Assistant {ha_ip}",
-        f":if ([:len [/certificate find name={CERT}]] = 0) do={{ /certificate add name={CERT} common-name={CERT} days-valid=3650 key-usage=digital-signature,key-encipherment,tls-server; /certificate sign {CERT} }}",
+        # RouterOS 7.25 refuses to self-sign ("CA not found") unless the
+        # certificate may sign certificates itself: hence key-cert-sign.
+        f":if ([:len [/certificate find name={CERT}]] = 0) do={{ /certificate add name={CERT} common-name={CERT} days-valid=3650 key-usage={KEY_USAGE} }}",
+        f":if ([:len [/certificate get [find name={CERT}] fingerprint]] = 0) do={{ /certificate set [find name={CERT}] key-usage={KEY_USAGE}; /certificate sign {CERT} }}",
         # Signing runs in the background on small boards. Only a finished
         # certificate has a fingerprint; the key alone can appear earlier.
         f':local ok false; :local n 0; :while (!$ok && $n < 90) do={{ :do {{ :local c [/certificate find name={CERT}]; :set ok ([:len [/certificate get $c fingerprint]] > 0 && [/certificate get $c private-key]) }} on-error={{}}; :if (!$ok) do={{ :delay 1s; :set n ($n + 1) }} }}; :if (!$ok) do={{ :put "site-health: certificate is still being signed - wait a minute and paste the block again" }}',
