@@ -891,4 +891,7 @@ const STYLE = `
   }
 `;
 
-customElements.define("site-health-panel", SiteHealthPanel);
+// HA may load a newer bundle (new ?v=) into a page that already has one.
+if (!customElements.get("site-health-panel")) {
+  customElements.define("site-health-panel", SiteHealthPanel);
+}

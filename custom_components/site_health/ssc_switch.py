@@ -235,7 +235,10 @@ class SscSwitchClient:
             async with self._session.post(
                 f"{self._base}/{cmd}",
                 data=json.dumps(body),
-                headers={"Content-Type": "application/json; charset=utf-8"},
+                headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Connection": "close",
+                },
                 timeout=self._timeout,
             ) as resp:
                 text = await resp.text()

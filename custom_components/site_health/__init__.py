@@ -127,14 +127,10 @@ def make_modem_client(hass: HomeAssistant, data: dict) -> TandemClient:
 
 
 def make_switch_client(hass: HomeAssistant, data: dict) -> SscSwitchClient:
-    # Own cookie jar (the switch's session cookie) and no keep-alive: the
-    # switch's lwIP server serves one request per connection.
+    # Own cookie jar for the switch's session cookie; every request carries
+    # "Connection: close" because the lwIP server serves one per connection.
     return SscSwitchClient(
-        async_create_clientsession(
-            hass,
-            cookie_jar=aiohttp.CookieJar(unsafe=True),
-            connector=aiohttp.TCPConnector(force_close=True),
-        ),
+        async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar(unsafe=True)),
         data[CONF_HOST],
         data[CONF_PASSWORD],
     )
