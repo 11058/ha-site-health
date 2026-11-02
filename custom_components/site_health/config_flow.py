@@ -67,6 +67,24 @@ async def _ha_ip(hass: HomeAssistant, target: str) -> str:
         return ""
 
 
+async def _suggest_gateway(hass: HomeAssistant) -> str:
+    """HA's own segment gateway (x.y.z.1): the router address to stay in-segment.
+
+    Talking to the router on the address of HA's own VLAN keeps the traffic
+    there; the admin VLAN address would work too but means nothing to HA.
+    """
+    from homeassistant.components import network
+
+    try:
+        ip = await network.async_get_source_ip(hass)
+    except Exception:
+        return ""
+    parts = ip.split(".")
+    if len(parts) != 4 or ip.startswith("127."):
+        return ""
+    return ".".join([*parts[:3], "1"])
+
+
 def _generated(host: str, ha_ip: str) -> dict[str, Any]:
     return {
         CONF_HOST: host,
@@ -161,7 +179,7 @@ class SiteHealthConfigFlow(ConfigFlow, domain=DOMAIN):
             return await self.async_step_manual()
         schema = {
             vol.Required(CONF_SITE_NAME): str,
-            vol.Required(CONF_HOST): str,
+            vol.Required(CONF_HOST, default=await _suggest_gateway(self.hass)): str,
             vol.Required(METHOD, default=METHOD_SCRIPT): _method_selector(),
         }
         return self.async_show_form(step_id="user", data_schema=vol.Schema(schema))

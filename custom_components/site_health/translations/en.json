@@ -8,6 +8,9 @@
           "site_name": "Site name",
           "host": "Router address",
           "method": "How to connect"
+        },
+        "data_description": {
+          "host": "The router's address in Home Assistant's own segment — usually its gateway (prefilled). No need for an admin-network address."
         }
       },
       "reauth_confirm": {
