@@ -33,6 +33,7 @@ DEFAULT_WG_STALE = 180
 # Subentry types.
 SUBENTRY_DEVICE = "device"
 SUBENTRY_MODEM = "modem"
+SUBENTRY_SWITCH = "switch"
 
 HTTP_TIMEOUT = 10
 

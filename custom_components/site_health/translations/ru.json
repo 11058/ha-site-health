@@ -142,6 +142,38 @@
       "abort": {
         "already_configured": "Уже добавлен"
       }
+    },
+    "switch": {
+      "entry_type": "Коммутатор",
+      "initiate_flow": {
+        "user": "Добавить коммутатор"
+      },
+      "step": {
+        "user": {
+          "title": "Добавить коммутатор",
+          "description": "Главный роутер проверяет {count} ещё не добавленных коммутаторов. Выберите или введите адрес.",
+          "data": {
+            "device": "Коммутатор"
+          }
+        },
+        "credentials": {
+          "title": "Коммутатор {host}",
+          "description": "Пароль веб-интерфейса коммутатора (PS308GV3 / PS208GV3). HA входит лишь на мгновение при каждом опросе, веб-интерфейс остаётся доступен.",
+          "data": {
+            "name": "Название",
+            "host": "Адрес",
+            "password": "Пароль"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Коммутатор не отвечает",
+        "invalid_auth": "Неверный пароль",
+        "switch_busy": "Сейчас кто-то вошёл в веб-интерфейс коммутатора — выйдите из него и повторите"
+      },
+      "abort": {
+        "already_configured": "Уже добавлен"
+      }
     }
   },
   "options": {
@@ -264,6 +296,21 @@
       },
       "modem_connected_since": {
         "name": "На связи с"
+      },
+      "switch_temperature": {
+        "name": "Температура"
+      },
+      "switch_poe_total": {
+        "name": "Мощность PoE"
+      },
+      "switch_port": {
+        "name": "Порт {port}",
+        "state": {
+          "down": "нет линка"
+        }
+      },
+      "switch_port_power": {
+        "name": "Порт {port} PoE"
       }
     },
     "binary_sensor": {
@@ -295,6 +342,9 @@
       },
       "modem_select_sim": {
         "name": "Переключить на SIM {slot}"
+      },
+      "switch_port_restart": {
+        "name": "Перезапустить порт {port}"
       }
     }
   },

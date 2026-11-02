@@ -39,6 +39,7 @@ from .const import (
     DOMAIN,
     SUBENTRY_DEVICE,
     SUBENTRY_MODEM,
+    SUBENTRY_SWITCH,
 )
 from .mikrotik import MikrotikAuthError, MikrotikError
 from .parsers import mikrotik_candidates
@@ -160,7 +161,11 @@ class SiteHealthConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_supported_subentry_types(
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
-        return {SUBENTRY_DEVICE: DeviceSubentryFlow, SUBENTRY_MODEM: ModemSubentryFlow}
+        return {
+            SUBENTRY_DEVICE: DeviceSubentryFlow,
+            SUBENTRY_MODEM: ModemSubentryFlow,
+            SUBENTRY_SWITCH: SwitchSubentryFlow,
+        }
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -525,3 +530,102 @@ class ModemSubentryFlow(ConfigSubentryFlow):
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+
+
+class SwitchSubentryFlow(ConfigSubentryFlow):
+    """A web-smart PoE switch (PS308GV3 / PS208GV3) watched by the core router."""
+
+    def __init__(self) -> None:
+        self._host: str = ""
+        self._name: str = ""
+
+    def _candidates(self) -> dict[str, str]:
+        """Switches the core router pings (netwatch) in its switch subnet."""
+        import ipaddress
+
+        entry = self._get_entry()
+        site = getattr(
+            getattr(getattr(entry, "runtime_data", None), "site", None), "site", None
+        )
+        if site is None:
+            return {}
+        nets = [
+            ipaddress.ip_network(g.network)
+            for g in site.segments.values()
+            if g.kind == "switches"
+        ]
+        known = {s.data.get(CONF_HOST) for s in entry.subentries.values()}
+        found: dict[str, str] = {}
+        for probe in site.probes.values():
+            try:
+                addr = ipaddress.ip_address(probe.host)
+            except ValueError:
+                continue
+            if probe.host in known or not any(addr in n for n in nets):
+                continue
+            found[probe.host] = f"{probe.name} — {probe.host}"
+        return found
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        candidates = self._candidates()
+        if user_input is not None:
+            choice = user_input["device"]
+            if choice != MANUAL:
+                self._host = choice
+                self._name = candidates.get(choice, choice).split(" — ")[0]
+            return await self.async_step_credentials()
+        options = [
+            selector.SelectOptionDict(value=h, label=label)
+            for h, label in candidates.items()
+        ]
+        options.append(selector.SelectOptionDict(value=MANUAL, label="Ввести адрес"))
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("device"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(options=options)
+                    )
+                }
+            ),
+            description_placeholders={"count": str(len(candidates))},
+        )
+
+    async def async_step_credentials(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        from . import make_switch_client
+        from .ssc_switch import SwitchAuthError, SwitchBusyError, SwitchError
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            host = (user_input.get(CONF_HOST) or self._host).strip()
+            data = {CONF_HOST: host, CONF_PASSWORD: user_input[CONF_PASSWORD]}
+            try:
+                await make_switch_client(self.hass, data).check()
+            except SwitchBusyError:
+                errors["base"] = "switch_busy"
+            except SwitchAuthError:
+                errors["base"] = "invalid_auth"
+            except SwitchError:
+                errors["base"] = "cannot_connect"
+            else:
+                return self.async_create_entry(
+                    title=user_input.get("name") or self._name or host,
+                    data=data,
+                    unique_id=f"switch:{host}",
+                )
+        schema: dict = {vol.Required("name", default=self._name or "Switch"): str}
+        if not self._host:
+            schema[vol.Required(CONF_HOST)] = str
+        schema[vol.Required(CONF_PASSWORD)] = selector.TextSelector(
+            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+        )
+        return self.async_show_form(
+            step_id="credentials",
+            data_schema=vol.Schema(schema),
+            errors=errors,
+            description_placeholders={"host": self._host or ""},
+        )

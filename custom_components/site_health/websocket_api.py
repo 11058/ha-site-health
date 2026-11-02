@@ -49,6 +49,17 @@ def _modem_view(coord) -> dict[str, Any]:
     }
 
 
+def _switch_view(coord) -> dict[str, Any]:
+    return {
+        "subentry_id": coord.subentry_id,
+        "name": coord.device_name,
+        "host": coord.host,
+        "online": coord.last_update_success,
+        "error": coord.last_error,
+        "info": to_dict(coord.data) if coord.data else None,
+    }
+
+
 def site_overview(hass: HomeAssistant) -> list[dict[str, Any]]:
     from . import loaded_runtimes
 
@@ -72,6 +83,7 @@ def site_overview(hass: HomeAssistant) -> list[dict[str, Any]]:
                 "clients": [to_dict(c) for c in site.clients.values()] if site else [],
                 "admin_vlan": coord.admin_vlan,
                 "modems": [_modem_view(m) for m in runtime.modems.values()],
+                "switches": [_switch_view(w) for w in runtime.switches.values()],
                 "neighbors": [to_dict(n) for n in site.neighbors.values()]
                 if site
                 else [],
@@ -101,7 +113,11 @@ def ws_subscribe(hass: HomeAssistant, connection, msg: dict) -> None:
         )
 
     for _entry, runtime in loaded_runtimes(hass):
-        for coord in [*runtime.all(), *runtime.modems.values()]:
+        for coord in [
+            *runtime.all(),
+            *runtime.modems.values(),
+            *runtime.switches.values(),
+        ]:
             unsubs.append(coord.async_add_listener(_changed))
 
     @callback
@@ -201,6 +217,55 @@ async def ws_modem_sim(hass: HomeAssistant, connection, msg: dict) -> None:
     connection.send_result(msg["id"], {"slot": msg["slot"]})
 
 
+async def _switch_action(hass, connection, msg, action) -> None:
+    from . import find_switch
+    from .ssc_switch import SwitchError
+
+    try:
+        await find_switch(hass, msg["switch"]).async_run(action)
+    except (HomeAssistantError, SwitchError) as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/switch_vlan",
+        vol.Required("switch"): str,
+        vol.Required("port"): int,
+        vol.Required("vlan"): vol.Any(
+            vol.All(int, vol.Range(min=1, max=4094)), "trunk"
+        ),
+    }
+)
+@websocket_api.async_response
+async def ws_switch_vlan(hass: HomeAssistant, connection, msg: dict) -> None:
+    await _switch_action(
+        hass, connection, msg, lambda c: c.set_port_vlan(msg["port"], msg["vlan"])
+    )
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/switch_port",
+        vol.Required("switch"): str,
+        vol.Required("port"): int,
+        vol.Required("action"): vol.In(["restart", "poe_on", "poe_off"]),
+    }
+)
+@websocket_api.async_response
+async def ws_switch_port(hass: HomeAssistant, connection, msg: dict) -> None:
+    port, act = msg["port"], msg["action"]
+    if act == "restart":
+        action = lambda c: c.restart_port(port)  # noqa: E731
+    else:
+        action = lambda c: c.set_poe(port, act == "poe_on")  # noqa: E731
+    await _switch_action(hass, connection, msg, action)
+
+
 @callback
 def async_register_websocket(hass: HomeAssistant) -> None:
     for handler in (
@@ -210,5 +275,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
         ws_family_remove,
         ws_set_segment,
         ws_modem_sim,
+        ws_switch_vlan,
+        ws_switch_port,
     ):
         websocket_api.async_register_command(hass, handler)

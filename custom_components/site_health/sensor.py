@@ -260,3 +260,7 @@ async def async_setup_entry(
         from .modem_entity import modem_sensors
 
         async_add_entities(modem_sensors(modem), config_subentry_id=sub_id)
+    for sub_id, sw in entry.runtime_data.switches.items():
+        from .switch_entity import switch_sensors
+
+        async_add_entities(switch_sensors(sw), config_subentry_id=sub_id)

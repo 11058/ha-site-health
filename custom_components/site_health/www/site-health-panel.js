@@ -13,6 +13,8 @@ const SEGMENTS = [
   ["other", "Прочее"],
 ];
 const SEG_LABEL = Object.fromEntries(SEGMENTS);
+const SEG_BY_VLAN = { 10: "управление", 11: "NVR", 12: "камеры", 20: "умный дом",
+  30: "семья", 40: "гости", 50: "DMZ", 99: "админ" };
 const PLACE_LABEL = { family: "домашние", admin: "админы", guest: "гости" };
 const WAN_KIND = { dhcp: "DHCP", pppoe: "PPPoE", lte: "LTE" };
 const WAN_STATUS = { bound: "подключён", searching: "поиск DHCP", "searching...": "поиск DHCP",
@@ -291,6 +293,7 @@ class SiteHealthPanel extends HTMLElement {
         ${this._devices(s)}
         ${this._radio(s)}
       </div>
+      ${(s.switches || []).map((w) => this._switch(s, w)).join("")}
       ${this._clients(s)}`;
   }
 
@@ -389,7 +392,8 @@ class SiteHealthPanel extends HTMLElement {
         </tr>`;
     };
     const switchNets = s.segments.filter((g) => g.kind === "switches").map((g) => g.network);
-    const known = new Set([s.core.host, ...s.devices.map((d) => d.host)]);
+    const known = new Set([s.core.host, ...s.devices.map((d) => d.host),
+      ...(s.switches || []).map((w) => w.host)]);
     const watched = s.probes.filter((p) => !known.has(p.host)
       && (switchNets.some((n) => inNet(p.host, n)) || s.segments.some((g) => g.kind === "mgmt" && inNet(p.host, g.network))));
     const extra = watched.map((p) => `
@@ -407,6 +411,78 @@ class SiteHealthPanel extends HTMLElement {
           ${s.devices.map((d) => row(d, "MikroTik")).join("")}
           ${extra}
         </table>
+      </section>`;
+  }
+
+  _whoIs(s, mac) {
+    const c = s.clients.find((x) => x.mac === mac);
+    if (c) return cleanComment(c.comment) || c.hostname || c.ip || mac;
+    const n = (s.neighbors || []).find((x) => x.mac === mac);
+    if (n) return n.identity || mac;
+    for (const d of [s.core, ...s.devices]) {
+      if ((d.interfaces || []).some((i) => i.mac === mac)) return d.name;
+    }
+    return mac;
+  }
+
+  _switch(s, w) {
+    const i = w.info || {};
+    const sel = this._port && this._port.sw === w.subentry_id ? this._port.idx : null;
+    const tiles = (i.ports || []).map((p) => {
+      const cls = p.uplink || p.trunk ? "trunk" : p.up ? "up" : "down";
+      return `<button class="port ${cls} ${sel === p.index ? "sel" : ""}" data-do="port" data-sw="${esc(w.subentry_id)}" data-idx="${p.index}">
+        <span class="pn">${esc(p.name)}</span>
+        <span class="pv">${p.trunk ? "транк" : `VLAN ${p.vlan}`}</span>
+        <span class="ps">${p.up ? esc(p.speed || "") : "—"}${p.poe_w ? ` ⚡${p.poe_w}` : ""}</span>
+      </button>`;
+    }).join("");
+    let detail = "";
+    if (sel !== null && i.ports && i.ports[sel]) {
+      const p = i.ports[sel];
+      const who = p.macs.length
+        ? p.macs.slice(0, 12).map((m) => `<div>${esc(this._whoIs(s, m))} <span class="sub">${esc(m)}</span></div>`).join("")
+          + (p.macs.length > 12 ? `<div class="sub">и ещё ${p.macs.length - 12}</div>` : "")
+        : `<div class="sub">${p.up ? "MAC не видно (устройство молчит)" : "ничего не подключено"}</div>`;
+      let ctl = "";
+      if (this._admin && w.online) {
+        const busy = this._busy.has(`${w.subentry_id}:${sel}`);
+        if (p.uplink) {
+          ctl = `<div class="sub">Это аплинк к роутеру — менять его нельзя, коммутатор потеряет связь.</div>`;
+        } else if (this._confirm && this._confirm.sw === w.subentry_id && this._confirm.idx === sel) {
+          const c = this._confirm;
+          const what = c.action === "vlan" ? (c.vlan === "trunk" ? "сделать транком" : `перевести в VLAN ${c.vlan}`)
+            : c.action === "restart" ? "перезапустить порт (питание PoE пропадёт на несколько секунд)"
+            : c.action === "poe_off" ? "выключить PoE" : "включить PoE";
+          ctl = `<span class="sub">Порт ${esc(p.name)}: ${what}?</span>
+            <button class="act primary" data-do="sw-go" ${busy ? "disabled" : ""}>Да</button>
+            <button class="act" data-do="cancel">Нет</button>`;
+        } else {
+          const vlans = [1, ...(i.vlans || [])];
+          const opts = vlans.map((v) => `<option value="${v}" ${!p.trunk && p.vlan === v ? "selected" : ""}>VLAN ${v}${
+            v === 1 ? " (по умолчанию)" : SEG_BY_VLAN[v] ? ` — ${SEG_BY_VLAN[v]}` : ""}</option>`).join("")
+            + `<option value="trunk" ${p.trunk ? "selected" : ""}>Транк (все VLAN с тегами)</option>`;
+          ctl = `<label class="sub">VLAN порта <select id="vlansel">${opts}</select></label>
+            <button class="act" data-do="sw-vlan" ${busy ? "disabled" : ""}>Применить</button>
+            ${p.poe_capable ? `<button class="act" data-do="sw-ask" data-action="restart" ${busy ? "disabled" : ""}>Перезапустить (PoE)</button>
+              <button class="act" data-do="sw-ask" data-action="${p.poe_enabled ? "poe_off" : "poe_on"}" ${busy ? "disabled" : ""}>${p.poe_enabled ? "Выключить PoE" : "Включить PoE"}</button>` : ""}`;
+        }
+      }
+      detail = `<div class="portinfo">
+        <div><b>Порт ${esc(p.name)}</b> · ${p.up ? `линк ${esc(p.speed || "")}` : "нет линка"} · ${p.trunk ? "транк" : `VLAN ${p.vlan}`}${
+          p.uplink ? " · аплинк" : ""}${p.poe_capable ? ` · PoE ${p.poe_enabled ? "вкл" : "выкл"}${p.poe_w ? `, ${p.poe_w} Вт` : ""}` : ""}</div>
+        <div class="who">${who}</div>
+        ${ctl ? `<div class="actions">${ctl}</div>` : ""}
+      </div>`;
+    }
+    return `
+      <section class="card wide sw">
+        <h2>${dot(w.online)} ${esc(w.name)} <span class="sub">${esc(i.model || "")} · ${esc(w.host)}${
+          i.temperature !== null && i.temperature !== undefined ? ` · ${i.temperature} °C` : ""}${
+          i.poe_total_w ? ` · PoE ${i.poe_total_w} Вт` : ""}</span></h2>
+        ${!w.online ? `<div class="sub bad">${esc(w.error || "нет связи")}</div>` : ""}
+        ${w.error && w.online ? `<div class="sub warn">${esc(w.error)}</div>` : ""}
+        <div class="ports">${tiles}</div>
+        ${detail}
       </section>`;
   }
 
@@ -540,6 +616,30 @@ class SiteHealthPanel extends HTMLElement {
           this._call({ type: "site_health/modem_sim", modem: d.modem, slot: Number(d.slot) },
             `sim${d.slot}`);
           return;
+        case "port": {
+          const idx = Number(d.idx);
+          this._port = this._port && this._port.sw === d.sw && this._port.idx === idx ? null : { sw: d.sw, idx };
+          this._confirm = null;
+          break;
+        }
+        case "sw-ask":
+          this._confirm = { sw: this._port.sw, idx: this._port.idx, action: d.action };
+          break;
+        case "sw-vlan": {
+          const v = this.shadowRoot.getElementById("vlansel").value;
+          this._confirm = { sw: this._port.sw, idx: this._port.idx, action: "vlan",
+            vlan: v === "trunk" ? "trunk" : Number(v) };
+          break;
+        }
+        case "sw-go": {
+          const c = this._confirm;
+          this._confirm = null;
+          const msg = c.action === "vlan"
+            ? { type: "site_health/switch_vlan", switch: c.sw, port: c.idx, vlan: c.vlan }
+            : { type: "site_health/switch_port", switch: c.sw, port: c.idx, action: c.action };
+          this._call(msg, `${c.sw}:${c.idx}`);
+          return;
+        }
         case "wizard":
           this._openWizard(site(b), d.mac, d.place);
           return;
@@ -744,6 +844,22 @@ const STYLE = `
     border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 13px; margin: 2px 0 2px 4px; }
   .act.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
   .act[disabled] { opacity: .5; cursor: not-allowed; }
+  .ports { display:flex; flex-wrap: wrap; gap: 6px; }
+  .port { display:flex; flex-direction: column; align-items:center; min-width: 64px; padding: 6px 4px;
+    border-radius: 8px; border: 1px solid var(--divider-color); background: var(--secondary-background-color);
+    color: var(--primary-text-color); cursor: pointer; font-size: 11px; gap: 2px; }
+  .port .pn { font-size: 14px; font-weight: 600; }
+  .port.up { border-color: var(--success-color, #2e7d32); }
+  .port.up .pn { color: var(--success-color, #2e7d32); }
+  .port.trunk { border-color: var(--primary-color); }
+  .port.trunk .pn { color: var(--primary-color); }
+  .port.down { opacity: .7; }
+  .port.sel { box-shadow: 0 0 0 2px var(--primary-color); }
+  .portinfo { margin-top: 10px; padding: 10px; border-radius: 10px; background: var(--secondary-background-color); font-size: 13px; }
+  .portinfo .who { margin-top: 6px; display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 12px; }
+  .portinfo select { margin-left: 6px; padding: 3px 6px; border-radius: 6px; background: var(--card-background-color);
+    color: var(--primary-text-color); border: 1px solid var(--divider-color); }
+  .sw { margin-bottom: 16px; }
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display:flex; align-items:flex-start;
     justify-content:center; padding: 24px 12px; overflow-y:auto; z-index: 10; }
   .dialog { background: var(--card-background-color); color: var(--primary-text-color); border-radius: 16px;

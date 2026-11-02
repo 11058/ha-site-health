@@ -66,7 +66,7 @@ jobs:
           sys.path.insert(0, ".")
           modules = [
               "const", "models", "parsers", "mikrotik", "tandem", "coordinator", "dynamic",
-              "entity", "modem_entity", "config_flow", "sensor", "binary_sensor", "button",
+              "entity", "modem_entity", "ssc_switch", "switch_entity", "config_flow", "sensor", "binary_sensor", "button",
               "websocket_api", "panel", "provision", "diagnostics", "",
           ]
           failed = []

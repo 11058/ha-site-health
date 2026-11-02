@@ -142,6 +142,38 @@
       "abort": {
         "already_configured": "Already added"
       }
+    },
+    "switch": {
+      "entry_type": "Switch",
+      "initiate_flow": {
+        "user": "Add switch"
+      },
+      "step": {
+        "user": {
+          "title": "Add switch",
+          "description": "The core router watches {count} switches not added yet. Pick one or enter an address.",
+          "data": {
+            "device": "Switch"
+          }
+        },
+        "credentials": {
+          "title": "Switch {host}",
+          "description": "Password of the switch web page (PS308GV3 / PS208GV3). Home Assistant logs in only for a moment on each poll, so the web page stays usable.",
+          "data": {
+            "name": "Name",
+            "host": "Address",
+            "password": "Password"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "No answer from the switch",
+        "invalid_auth": "Password rejected",
+        "switch_busy": "Someone is logged into the switch web page right now — log out there and retry"
+      },
+      "abort": {
+        "already_configured": "Already added"
+      }
     }
   },
   "options": {
@@ -264,6 +296,21 @@
       },
       "modem_connected_since": {
         "name": "Connected since"
+      },
+      "switch_temperature": {
+        "name": "Temperature"
+      },
+      "switch_poe_total": {
+        "name": "PoE power"
+      },
+      "switch_port": {
+        "name": "Port {port}",
+        "state": {
+          "down": "no link"
+        }
+      },
+      "switch_port_power": {
+        "name": "Port {port} PoE"
       }
     },
     "binary_sensor": {
@@ -295,6 +342,9 @@
       },
       "modem_select_sim": {
         "name": "Switch to SIM {slot}"
+      },
+      "switch_port_restart": {
+        "name": "Restart port {port}"
       }
     }
   },

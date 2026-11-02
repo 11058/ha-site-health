@@ -51,10 +51,17 @@ from .const import (
     SERVICE_SET_SEGMENT,
     SUBENTRY_DEVICE,
     SUBENTRY_MODEM,
+    SUBENTRY_SWITCH,
 )
-from .coordinator import DeviceCoordinator, ModemCoordinator, SiteCoordinator
+from .coordinator import (
+    DeviceCoordinator,
+    ModemCoordinator,
+    SiteCoordinator,
+    SwitchCoordinator,
+)
 from .mikrotik import MikrotikClient, MikrotikError
 from .parsers import as_int, norm_mac, place_comment
+from .ssc_switch import SscSwitchClient
 from .tandem import TandemClient, TandemError
 
 _LOGGER = logging.getLogger(__name__)
@@ -71,6 +78,7 @@ class SiteRuntime:
     site: SiteCoordinator
     devices: dict[str, DeviceCoordinator] = field(default_factory=dict)
     modems: dict[str, ModemCoordinator] = field(default_factory=dict)
+    switches: dict[str, SwitchCoordinator] = field(default_factory=dict)
 
     def all(self) -> list[DeviceCoordinator]:
         return [self.site, *self.devices.values()]
@@ -114,6 +122,20 @@ def make_modem_client(hass: HomeAssistant, data: dict) -> TandemClient:
         async_create_clientsession(hass, cookie_jar=aiohttp.DummyCookieJar()),
         data[CONF_HOST],
         data[CONF_USERNAME],
+        data[CONF_PASSWORD],
+    )
+
+
+def make_switch_client(hass: HomeAssistant, data: dict) -> SscSwitchClient:
+    # Own cookie jar (the switch's session cookie) and no keep-alive: the
+    # switch's lwIP server serves one request per connection.
+    return SscSwitchClient(
+        async_create_clientsession(
+            hass,
+            cookie_jar=aiohttp.CookieJar(unsafe=True),
+            connector=aiohttp.TCPConnector(force_close=True),
+        ),
+        data[CONF_HOST],
         data[CONF_PASSWORD],
     )
 
@@ -176,6 +198,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
         await modem.async_restore()
         await modem.async_refresh()
         runtime.modems[sub_id] = modem
+
+    for sub_id, sub in entry.subentries.items():
+        if sub.subentry_type != SUBENTRY_SWITCH:
+            continue
+        sw = SwitchCoordinator(
+            hass,
+            entry,
+            make_switch_client(hass, sub.data),
+            name=sub.title,
+            interval_s=interval,
+            subentry_id=sub_id,
+        )
+        await sw.async_refresh()
+        runtime.switches[sub_id] = sw
 
     entry.runtime_data = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -335,6 +371,13 @@ async def async_remove_family(
     hass: HomeAssistant, mac: str, entry_id: str | None = None
 ) -> dict:
     return await async_set_segment(hass, mac, PLACE_GUEST, "", entry_id)
+
+
+def find_switch(hass: HomeAssistant, subentry_id: str) -> SwitchCoordinator:
+    for _entry, runtime in loaded_runtimes(hass):
+        if subentry_id in runtime.switches:
+            return runtime.switches[subentry_id]
+    raise ServiceValidationError(f"Switch {subentry_id} is not loaded")
 
 
 def _find_modem(hass: HomeAssistant, subentry_id: str) -> ModemCoordinator:

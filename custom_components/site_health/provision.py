@@ -142,6 +142,37 @@ async def async_provision_core(
         _LOGGER.warning("Could not add the forward rule: %s", err)
         result.failed.append(f"forward rule: {err}")
 
+    # 1b. HA -> web of the switches (their management lives in VLAN 1).
+    try:
+        rules = await client._list("ip/firewall/filter")
+        before = first_forward_drop(rules)
+        ha = ipaddress.ip_address(ha_ip)
+        for seg in segments.values():
+            net = ipaddress.ip_network(seg.network)
+            if seg.kind != "switches" or ha in net:
+                continue
+            comment = f"{COMMENT_TAG}: HA web -> switches {seg.network}"
+            what = f"forward HA -> {seg.network}:80"
+            if any(r.get("comment") == comment for r in rules):
+                result.already.append(what)
+                continue
+            payload = {
+                "chain": "forward",
+                "action": "accept",
+                "protocol": "tcp",
+                "dst-port": "80",
+                "src-address": ha_ip,
+                "dst-address": seg.network,
+                "comment": comment,
+            }
+            if before:
+                payload["place-before"] = before
+            await client._request("PUT", "ip/firewall/filter", payload)
+            result.done.append(what)
+    except MikrotikError as err:
+        _LOGGER.warning("Could not add the switch web rule: %s", err)
+        result.failed.append(f"switch web rule: {err}")
+
     # 2. Internet reachability probes.
     try:
         existing = await client.netwatch()

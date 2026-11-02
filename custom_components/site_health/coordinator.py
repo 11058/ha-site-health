@@ -31,6 +31,7 @@ from .parsers import (
     parse_tunnels,
     parse_wans,
 )
+from .ssc_switch import SscSwitchClient, SwitchBusyError, SwitchError, SwitchInfo
 from .tandem import TandemClient, TandemError, parse_status
 
 _LOGGER = logging.getLogger(__name__)
@@ -268,3 +269,53 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
     async def async_select_sim(self, slot: int) -> None:
         await self.client.select_sim(slot)
         await self.async_request_refresh()
+
+
+class SwitchCoordinator(DataUpdateCoordinator[SwitchInfo]):
+    """Polls an SSC web-smart switch (PS308GV3 / PS208GV3)."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        client: SscSwitchClient,
+        *,
+        name: str,
+        interval_s: int,
+        subentry_id: str,
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=f"{DOMAIN} {name}",
+            # Each poll is a full login/logout on a tiny web server: keep it calm.
+            update_interval=timedelta(seconds=max(interval_s * 2, 60)),
+        )
+        self.client = client
+        self.device_name = name
+        self.subentry_id = subentry_id
+        self.last_error: str | None = None
+
+    @property
+    def host(self) -> str:
+        return self.client.host
+
+    async def _async_update_data(self) -> SwitchInfo:
+        try:
+            info = await self.client.read()
+        except SwitchBusyError as err:
+            # Someone is in the switch's web page: keep the last data.
+            self.last_error = str(err)
+            if self.data is not None:
+                return self.data
+            raise UpdateFailed(str(err)) from err
+        except SwitchError as err:
+            self.last_error = str(err)
+            raise UpdateFailed(str(err)) from err
+        self.last_error = None
+        return info
+
+    async def async_run(self, action) -> None:
+        await action(self.client)
+        await self.async_refresh()
