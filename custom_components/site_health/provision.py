@@ -45,9 +45,10 @@ def onboarding_script(*, ha_ip: str, password: str, core: bool) -> str:
     lines = [
         f"# Site Health: access for Home Assistant {ha_ip}",
         f":if ([:len [/certificate find name={CERT}]] = 0) do={{ /certificate add name={CERT} common-name={CERT} days-valid=3650 key-usage=digital-signature,key-encipherment,tls-server; /certificate sign {CERT} }}",
-        # Signing runs in the background on small boards: wait for the key.
-        f":local n 0; :while ([:len [/certificate find where name={CERT} and private-key]] = 0 && $n < 60) do={{ :delay 1s; :set n ($n + 1) }}",
-        f':if ([/ip service get www-ssl certificate] = "none") do={{ /ip service set www-ssl certificate={CERT} }}',
+        # Signing runs in the background on small boards. Only a finished
+        # certificate has a fingerprint; the key alone can appear earlier.
+        f':local ok false; :local n 0; :while (!$ok && $n < 90) do={{ :do {{ :local c [/certificate find name={CERT}]; :set ok ([:len [/certificate get $c fingerprint]] > 0 && [/certificate get $c private-key]) }} on-error={{}}; :if (!$ok) do={{ :delay 1s; :set n ($n + 1) }} }}; :if (!$ok) do={{ :put "site-health: certificate is still being signed - wait a minute and paste the block again" }}',
+        f':do {{ :if ([/ip service get www-ssl certificate] = "none") do={{ /ip service set www-ssl certificate={CERT} }} }} on-error={{ :put "site-health: certificate {CERT} is not ready - wait a minute and paste the block again" }}',
         # Keep any addresses already allowed (e.g. the admin's), only add HA.
         f':if ([/ip service get www-ssl disabled]) do={{ /ip service set www-ssl address={ha} disabled=no }} else={{ :local a [/ip service get www-ssl address]; :if ([:len $a] > 0 && [:typeof [:find $a {ha}]] = "nil") do={{ /ip service set www-ssl address=($a,"{ha}") }} }}',
         f':if ([:len [/user group find name={GROUP}]] = 0) do={{ /user group add name={GROUP} policy={policy} comment="Site Health (Home Assistant)" }} else={{ /user group set {GROUP} policy={policy} }}',
