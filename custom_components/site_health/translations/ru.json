@@ -323,6 +323,9 @@
           "sim2": "переход на SIM 2",
           "sim1": "переход на SIM 1"
         }
+      },
+      "clients_asic": {
+        "name": "Клиенты: ASIC"
       }
     },
     "binary_sensor": {

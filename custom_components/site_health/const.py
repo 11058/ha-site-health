@@ -49,6 +49,7 @@ SEG_FAMILY = "family"
 SEG_GUEST = "guest"
 SEG_ADMIN = "admin"
 SEG_DMZ = "dmz"
+SEG_ASIC = "asic"
 SEG_SWITCHES = "switches"
 SEG_OTHER = "other"
 
@@ -56,6 +57,7 @@ SEGMENT_ORDER = [
     SEG_FAMILY,
     SEG_GUEST,
     SEG_IOT,
+    SEG_ASIC,
     SEG_VIDEO,
     SEG_ADMIN,
     SEG_MGMT,
@@ -74,11 +76,15 @@ SEGMENT_BY_VLAN: dict[int, str] = {
     30: SEG_FAMILY,
     40: SEG_GUEST,
     50: SEG_DMZ,
+    # ASIC miners: VLAN number = start of their /21 (10.N.64.0/21).
+    64: SEG_ASIC,
     99: SEG_ADMIN,
 }
 
 # Fallback when an interface carries no VLAN id: match on its name.
 SEGMENT_BY_NAME_HINT: list[tuple[str, str]] = [
+    ("asic", SEG_ASIC),
+    ("miner", SEG_ASIC),
     ("guest", SEG_GUEST),
     ("famil", SEG_FAMILY),
     ("user", SEG_FAMILY),

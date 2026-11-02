@@ -117,6 +117,14 @@
    "running": "true",
    "disabled": "false",
    "mac-address": "02:00:00:00:00:10"
+  },
+  {
+   ".id": "*17",
+   "name": "vlan64-ASIC",
+   "type": "vlan",
+   "running": "true",
+   "disabled": "false",
+   "mac-address": "02:00:00:00:00:10"
   }
  ],
  "vlans": [
@@ -143,6 +151,11 @@
   {
    "name": "vlan10-MGMT",
    "vlan-id": "10",
+   "interface": "br-LAN"
+  },
+  {
+   "name": "vlan64-ASIC",
+   "vlan-id": "64",
    "interface": "br-LAN"
   }
  ],
@@ -224,6 +237,15 @@
    "address": "10.5.254.1/30",
    "network": "10.5.254.0",
    "interface": "br-byedpi",
+   "disabled": "false",
+   "dynamic": "false",
+   "invalid": "false"
+  },
+  {
+   ".id": "*10",
+   "address": "10.5.64.1/21",
+   "network": "10.5.64.0",
+   "interface": "vlan64-ASIC",
    "disabled": "false",
    "dynamic": "false",
    "invalid": "false"

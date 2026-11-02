@@ -126,6 +126,7 @@ class Client:
     online: bool = False
     last_seen_s: int | None = None
     static_lease: bool = False
+    lease_id: str = ""
     family: bool = False
     admin: bool = False
     family_entry_id: str = ""

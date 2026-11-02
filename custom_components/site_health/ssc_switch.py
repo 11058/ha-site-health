@@ -200,6 +200,24 @@ def vlan_table_with(
     return new
 
 
+def vlan_table_add(vlan: dict[str, Any], vid: int) -> dict[str, Any]:
+    """The table with one more VLAN, no access ports: trunks will carry it."""
+    new = deepcopy(vlan)
+    ids = [int(v) for v in new.get("vlanid") or []]
+    if vid in ids:
+        return new
+    if not 2 <= vid <= 4094:
+        raise SwitchError(f"VLAN {vid} out of range")
+    if len(ids) >= MAX_VLANS:
+        raise SwitchError("the switch holds at most 15 VLANs")
+    new["vlan"], new["vlantype"] = 1, 1
+    new["vlanid"] = [*ids, vid]
+    new["vlanport"] = [*(int(m) for m in new.get("vlanport") or []), 0]
+    if not int(new.get("porttype") or 0):
+        raise SwitchError("the switch has no trunk port")
+    return new
+
+
 class SwitchBusyError(SwitchError):
     """Another web session is open: the firmware allows only one at a time."""
 
@@ -318,6 +336,20 @@ class SscSwitchClient:
                 raise SwitchError(f"{self._host}: VLAN change refused")
 
         await self._session_do(work)
+
+    async def ensure_vlan(self, vid: int) -> bool:
+        """Make the switch know a VLAN (carried by its trunks). True if added."""
+
+        async def work() -> bool:
+            vlan = await self._cmd(CMD_VLAN)
+            if vid in [int(v) for v in vlan.get("vlanid") or []]:
+                return False
+            result = await self._cmd(CMD_VLAN, vlan_table_add(vlan, vid))
+            if result.get("vlan") != "ok":
+                raise SwitchError(f"{self._host}: VLAN {vid} not added")
+            return True
+
+        return await self._session_do(work)
 
     async def _port_op(self, port_index: int, op: int, value: int) -> None:
         async def work() -> None:

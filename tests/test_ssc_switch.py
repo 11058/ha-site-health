@@ -60,3 +60,13 @@ def test_vlan_trunk_rules():
     no_trunk = dict(vlan, porttype=1 << 9)
     with pytest.raises(sw.SwitchError):
         sw.vlan_table_with(no_trunk, 9, 20, 11)  # last trunk would vanish
+
+
+def test_vlan_add_without_ports():
+    vlan = F["house_all"]["vlan"]
+    new = sw.vlan_table_with(vlan, 0, 12, 11)  # unchanged port, sanity
+    added = sw.vlan_table_add(vlan, 64)
+    assert added["vlanid"][-1] == 64 and added["vlanport"][-1] == 0
+    assert added["porttype"] == vlan["porttype"]
+    assert sw.vlan_table_add(added, 64) == added  # idempotent
+    assert new["vlanid"] == vlan["vlanid"]

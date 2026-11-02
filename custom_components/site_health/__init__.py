@@ -168,7 +168,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
     await site.async_config_entry_first_refresh()
     runtime = SiteRuntime(site=site)
     runtime.names_store = Store(hass, 1, f"{DOMAIN}.names.{entry.entry_id}")
-    runtime.names = await runtime.names_store.async_load() or {}
+    saved = await runtime.names_store.async_load() or {}
+    if "names" not in saved:  # 0.5.0 stored a flat MAC -> name map
+        saved = {"names": saved, "written": {}}
+    runtime.names = saved["names"]
+    site.names = runtime.names
+    site.names_written = saved["written"]
+    site.save_names = lambda: runtime.names_store.async_delay_save(
+        lambda: {"names": runtime.names, "written": site.names_written}, 5
+    )
 
     for sub_id, sub in entry.subentries.items():
         if sub.subentry_type != SUBENTRY_DEVICE:
@@ -387,8 +395,9 @@ async def async_set_name(
         runtime.names[mac] = name
     else:
         runtime.names.pop(mac, None)
-    await runtime.names_store.async_save(runtime.names)
-    runtime.site.async_update_listeners()
+    runtime.site.save_names()
+    # The next poll writes the name to the router's lease comment.
+    await runtime.site.async_refresh()
     return {"mac": mac, "name": name}
 
 

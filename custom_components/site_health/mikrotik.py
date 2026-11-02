@@ -209,6 +209,11 @@ class MikrotikClient:
     async def remove_wifi_access(self, entry_id: str) -> None:
         await self._request("DELETE", f"interface/wifi/access-list/{entry_id}")
 
+    async def set_lease_comment(self, lease_id: str, comment: str) -> None:
+        await self._request(
+            "PATCH", f"ip/dhcp-server/lease/{lease_id}", {"comment": comment}
+        )
+
     async def kick_wifi_client(self, mac: str) -> int:
         """Drop a client's association so it reconnects and gets the new VLAN."""
         kicked = 0

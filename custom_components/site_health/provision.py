@@ -173,6 +173,38 @@ async def async_provision_core(
         _LOGGER.warning("Could not add the switch web rule: %s", err)
         result.failed.append(f"switch web rule: {err}")
 
+    # 1c. HA -> ASIC miners (their web/API for the ASIC Fleet integration).
+    try:
+        rules = await client._list("ip/firewall/filter")
+        before = first_forward_drop(rules)
+        for seg in segments.values():
+            if seg.kind != "asic":
+                continue
+            comment = f"{COMMENT_TAG}: HA -> ASIC {seg.network}"
+            what = f"forward HA -> {seg.network}"
+            if any(r.get("comment") == comment for r in rules) or any(
+                r.get("src-address") == ha_ip
+                and r.get("out-interface") == seg.interface
+                and r.get("action") == "accept"
+                for r in rules
+            ):
+                result.already.append(what)
+                continue
+            payload = {
+                "chain": "forward",
+                "action": "accept",
+                "src-address": ha_ip,
+                "dst-address": seg.network,
+                "comment": comment,
+            }
+            if before:
+                payload["place-before"] = before
+            await client._request("PUT", "ip/firewall/filter", payload)
+            result.done.append(what)
+    except MikrotikError as err:
+        _LOGGER.warning("Could not add the ASIC rule: %s", err)
+        result.failed.append(f"ASIC rule: {err}")
+
     # 2. Internet reachability probes.
     try:
         existing = await client.netwatch()

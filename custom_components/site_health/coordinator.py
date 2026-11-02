@@ -142,6 +142,11 @@ class SiteCoordinator(DeviceCoordinator):
         self.wg_stale_s = wg_stale_s
         # MACs of the infrastructure itself, hidden from the client list.
         self.infra_macs: set[str] = set()
+        # Client names (MAC -> name) shared with the runtime, the value last
+        # written to the router per MAC, and a callback to persist both.
+        self.names: dict[str, str] = {}
+        self.names_written: dict[str, str] = {}
+        self.save_names: Callable[[], None] = lambda: None
 
     @property
     def site(self) -> SiteSnapshot | None:
@@ -152,6 +157,38 @@ class SiteCoordinator(DeviceCoordinator):
         if not site:
             return {}
         return {mac: nb.identity for mac, nb in site.neighbors.items() if nb.identity}
+
+    async def _sync_names(self, clients: dict[str, Any]) -> None:
+        """Keep HA names and DHCP lease comments in step, both directions.
+
+        A name set in the panel is written to the lease comment (and again
+        whenever the lease comes back after expiring). A comment changed on
+        the router since we last wrote it wins and becomes the name.
+        """
+        changed = False
+        writes = 0
+        for mac, client in clients.items():
+            name = self.names.get(mac)
+            comment = client.comment
+            if not client.lease_id or not name:
+                continue
+            if comment and comment != name and comment != self.names_written.get(mac):
+                self.names[mac] = comment
+                self.names_written[mac] = comment
+                changed = True
+                continue
+            if comment != name and writes < 5:
+                try:
+                    await self.client.set_lease_comment(client.lease_id, name)
+                except MikrotikError as err:
+                    _LOGGER.debug("lease comment for %s not written: %s", mac, err)
+                    continue
+                client.comment = name
+                self.names_written[mac] = name
+                writes += 1
+                changed = True
+        if changed:
+            self.save_names()
 
     async def _fetch(self) -> SiteSnapshot:
         base, raw = await self._common()
@@ -206,6 +243,7 @@ class SiteCoordinator(DeviceCoordinator):
             admin_vlan=self.admin_vlan,
             exclude_macs=infra,
         )
+        await self._sync_names(clients)
         # Switch management VLAN holds infrastructure, shown with the devices.
         clients = {m: c for m, c in clients.items() if c.segment_kind != SEG_SWITCHES}
         return SiteSnapshot(

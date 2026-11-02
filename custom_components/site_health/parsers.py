@@ -517,6 +517,7 @@ def build_clients(
         client.hostname = str(row.get("host-name", ""))
         client.comment = str(row.get("comment", ""))
         client.static_lease = not as_bool(row.get("dynamic"))
+        client.lease_id = str(row.get(".id", ""))
         last_seen = parse_duration_int(row.get("last-seen"))
         client.last_seen_s = last_seen
         if str(row.get("status", "")) == "bound" and (
@@ -614,10 +615,14 @@ def translit(text: str) -> str:
     return "".join(out)
 
 
+def clean_comment(text: str) -> str:
+    """RouterOS stores Cyrillic fine when written over REST; only trim it."""
+    return re.sub(r"[\x00-\x1f\x7f]", "", text).replace('"', "'").strip()[:64]
+
+
 def place_comment(place: str, name: str, vlan_id: int) -> str:
-    """Comment for an access-list entry set from HA: ASCII, bounded."""
-    clean = re.sub(r"[^\x20-\x7e]", "", translit(name)).strip()
-    clean = clean.replace('"', "'")[:48]
+    """Comment for an access-list entry set from HA."""
+    clean = clean_comment(name)[:48]
     prefix = {"family": "Family", "admin": "Admin"}.get(place, place.title())
     label = f"{prefix}: {clean}" if clean else prefix
     return f"{label} -> VLAN {vlan_id} (HA)"

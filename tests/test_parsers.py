@@ -120,6 +120,7 @@ def test_segments(parsers, gw):
         "10.5.20.0/24": "iot",
         "10.5.30.0/24": "family",
         "10.5.40.0/24": "guest",
+        "10.5.64.0/21": "asic",
         "10.5.99.0/24": "admin",
     }
 
@@ -181,9 +182,12 @@ def test_candidates(parsers, gw):
 
 def test_translit(parsers):
     assert parsers.translit("Телефон Маши") == "Telefon Mashi"
-    assert parsers.family_comment("Планшет «детский»", 30) == (
-        "Family: Planshet detskiy -> VLAN 30 (HA)"
+    # RouterOS keeps Cyrillic written over REST (checked on 7.25), so names
+    # are no longer transliterated; quotes and control characters go.
+    assert parsers.family_comment('Планшет "детский"', 30) == (
+        "Family: Планшет 'детский' -> VLAN 30 (HA)"
     )
+    assert parsers.clean_comment("a\tb\nc") == "abc"
     assert parsers.slug("wan-8.8.8.8") == "wan_8_8_8_8"
 
 

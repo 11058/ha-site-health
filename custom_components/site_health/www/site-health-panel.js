@@ -7,6 +7,7 @@ const SEGMENTS = [
   ["guest", "Гости"],
   ["admin", "Админ"],
   ["iot", "Умный дом"],
+  ["asic", "ASIC"],
   ["video", "Видео"],
   ["mgmt", "Управление"],
   ["dmz", "DMZ"],
@@ -14,7 +15,7 @@ const SEGMENTS = [
 ];
 const SEG_LABEL = Object.fromEntries(SEGMENTS);
 const SEG_BY_VLAN = { 10: "управление", 11: "NVR", 12: "камеры", 20: "умный дом",
-  30: "семья", 40: "гости", 50: "DMZ", 99: "админ" };
+  30: "семья", 40: "гости", 50: "DMZ", 64: "ASIC", 99: "админ" };
 const PLACE_LABEL = { family: "домашние", admin: "админы", guest: "гости" };
 const WAN_KIND = { dhcp: "DHCP", pppoe: "PPPoE", lte: "LTE" };
 const WAN_STATUS = { bound: "подключён", searching: "поиск DHCP", "searching...": "поиск DHCP",
@@ -599,7 +600,7 @@ class SiteHealthPanel extends HTMLElement {
 
     const hint = this._seg === "guest"
       ? `<div class="hint">Новые Wi-Fi-устройства попадают в гостевую сеть. «В домашние» / «В админы» проведёт по шагам: отключить частный адрес Wi-Fi на устройстве, найти его новое подключение и добавить в access-list роутера (VLAN ${s.family_vlan} / ${s.admin_vlan}).</div>`
-      : ["iot", "video", "mgmt"].includes(this._seg)
+      : ["iot", "video", "mgmt", "asic"].includes(this._seg)
         ? `<div class="hint">Сюда устройства попадают по своему Wi-Fi (скрытая IoT-сеть) или по VLAN порта коммутатора — переносить их отсюда не нужно.</div>` : "";
     return `
       <section class="card wide">
