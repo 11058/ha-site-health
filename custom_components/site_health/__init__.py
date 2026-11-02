@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 import aiohttp
 import voluptuous as vol
@@ -17,6 +18,7 @@ from homeassistant.helpers.aiohttp_client import (
     async_create_clientsession,
     async_get_clientsession,
 )
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
@@ -79,6 +81,10 @@ class SiteRuntime:
     devices: dict[str, DeviceCoordinator] = field(default_factory=dict)
     modems: dict[str, ModemCoordinator] = field(default_factory=dict)
     switches: dict[str, SwitchCoordinator] = field(default_factory=dict)
+    # Human names for clients, by MAC. Kept in HA: Cyrillic-safe and
+    # independent of what the router can store in its comments.
+    names: dict[str, str] = field(default_factory=dict)
+    names_store: Any = None
 
     def all(self) -> list[DeviceCoordinator]:
         return [self.site, *self.devices.values()]
@@ -161,6 +167,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
     )
     await site.async_config_entry_first_refresh()
     runtime = SiteRuntime(site=site)
+    runtime.names_store = Store(hass, 1, f"{DOMAIN}.names.{entry.entry_id}")
+    runtime.names = await runtime.names_store.async_load() or {}
 
     for sub_id, sub in entry.subentries.items():
         if sub.subentry_type != SUBENTRY_DEVICE:
@@ -367,6 +375,21 @@ async def async_remove_family(
     hass: HomeAssistant, mac: str, entry_id: str | None = None
 ) -> dict:
     return await async_set_segment(hass, mac, PLACE_GUEST, "", entry_id)
+
+
+async def async_set_name(
+    hass: HomeAssistant, mac: str, name: str, entry_id: str | None = None
+) -> dict:
+    mac = _check_mac(mac)
+    runtime = _pick_runtime(hass, entry_id)
+    name = name.strip()[:64]
+    if name:
+        runtime.names[mac] = name
+    else:
+        runtime.names.pop(mac, None)
+    await runtime.names_store.async_save(runtime.names)
+    runtime.site.async_update_listeners()
+    return {"mac": mac, "name": name}
 
 
 def find_switch(hass: HomeAssistant, subentry_id: str) -> SwitchCoordinator:

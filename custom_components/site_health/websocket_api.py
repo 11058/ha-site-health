@@ -80,7 +80,12 @@ def site_overview(hass: HomeAssistant) -> list[dict[str, Any]]:
                 "segments": [to_dict(s) for s in site.segments.values()]
                 if site
                 else [],
-                "clients": [to_dict(c) for c in site.clients.values()] if site else [],
+                "clients": [
+                    {**to_dict(c), "alias": runtime.names.get(c.mac, "")}
+                    for c in site.clients.values()
+                ]
+                if site
+                else [],
                 "admin_vlan": coord.admin_vlan,
                 "modems": [_modem_view(m) for m in runtime.modems.values()],
                 "switches": [_switch_view(w) for w in runtime.switches.values()],
@@ -266,6 +271,46 @@ async def ws_switch_port(hass: HomeAssistant, connection, msg: dict) -> None:
     await _switch_action(hass, connection, msg, action)
 
 
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/modem_balance", vol.Required("modem"): str}
+)
+@websocket_api.async_response
+async def ws_modem_balance(hass: HomeAssistant, connection, msg: dict) -> None:
+    from . import _find_modem
+    from .tandem import TandemError
+
+    try:
+        await _find_modem(hass, msg["modem"]).async_request_balance()
+    except (HomeAssistantError, TandemError) as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    connection.send_result(msg["id"], {"requested": True})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/set_name",
+        vol.Required("mac"): str,
+        vol.Required("name"): str,
+        vol.Optional("entry_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_set_name(hass: HomeAssistant, connection, msg: dict) -> None:
+    from . import async_set_name
+
+    try:
+        result = await async_set_name(
+            hass, msg["mac"], msg["name"], msg.get("entry_id")
+        )
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    connection.send_result(msg["id"], result)
+
+
 @callback
 def async_register_websocket(hass: HomeAssistant) -> None:
     for handler in (
@@ -277,5 +322,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
         ws_modem_sim,
         ws_switch_vlan,
         ws_switch_port,
+        ws_modem_balance,
+        ws_set_name,
     ):
         websocket_api.async_register_command(hass, handler)

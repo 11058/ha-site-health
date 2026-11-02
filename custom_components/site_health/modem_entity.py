@@ -138,6 +138,19 @@ def modem_sensors(c: ModemCoordinator) -> list[SensorEntity]:
             c, "connected_since", _since,
             device_class=SensorDeviceClass.TIMESTAMP,
         ),
+        ModemSensor(
+            c, "balance", lambda d: d.balance,
+            native_unit_of_measurement="RUB",
+            device_class=SensorDeviceClass.MONETARY,
+            attrs_fn=lambda d: {
+                "message": d.balance_text, "received": d.balance_when,
+            },
+        ),
+        ModemSensor(
+            c, "failover", lambda d: (d.failover or {}).get("sim1_control") or "off",
+            entity_category=EntityCategory.DIAGNOSTIC,
+            attrs_fn=lambda d: d.failover,
+        ),
     ]  # fmt: skip
 
 
@@ -184,6 +197,20 @@ class ModemSimButton(ModemEntity, ButtonEntity):
         await self.coordinator.async_select_sim(self._slot)
 
 
+class ModemBalanceButton(ModemEntity, ButtonEntity):
+    """Ask the operator for the balance by a free SMS."""
+
+    _attr_translation_key = "modem_balance_request"
+
+    def __init__(self, coordinator: ModemCoordinator) -> None:
+        super().__init__(coordinator, "balance_request")
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_request_balance()
+
+
 def modem_buttons(c: ModemCoordinator) -> list[ButtonEntity]:
     slots = (c.data.sim_slots if c.data else None) or 2
-    return [ModemSimButton(c, slot) for slot in range(1, slots + 1)]
+    buttons: list[ButtonEntity] = [ModemSimButton(c, s) for s in range(1, slots + 1)]
+    buttons.append(ModemBalanceButton(c))
+    return buttons

@@ -176,6 +176,12 @@ class ModemInfo:
     temperature: float | None = None
     # What each slot looked like the last time it was the active one.
     last_by_slot: dict[str, dict] = field(default_factory=dict)
+    balance: float | None = None
+    balance_text: str = ""
+    balance_when: str = ""
+    balance_requested: float | None = None  # unix time of the last request
+    balance_supported: bool = False
+    failover: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

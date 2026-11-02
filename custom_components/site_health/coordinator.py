@@ -32,7 +32,13 @@ from .parsers import (
     parse_wans,
 )
 from .ssc_switch import SscSwitchClient, SwitchBusyError, SwitchError, SwitchInfo
-from .tandem import TandemClient, TandemError, parse_status
+from .tandem import (
+    TandemClient,
+    TandemError,
+    balance_request_for,
+    parse_balance,
+    parse_status,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -217,7 +223,15 @@ class SiteCoordinator(DeviceCoordinator):
 
 
 class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
-    """Polls a cellular router (Tandem-4GT) through its LuCI endpoints."""
+    """Polls a cellular router (Tandem-4GT) through its LuCI endpoints.
+
+    Besides the radio status it keeps: the balance (asked by a free SMS to the
+    operator, at most once a day unless asked from the panel; the answer is
+    read from the inbox) and the Ping Check / failover settings (read-only).
+    """
+
+    SLOW_EVERY_S = 600  # SMS inbox and settings page
+    REPLY_WAIT_S = 600  # how long to look out for the operator's answer
 
     def __init__(
         self,
@@ -228,6 +242,7 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
         name: str,
         interval_s: int,
         subentry_id: str,
+        balance_hours: int = 24,
     ) -> None:
         super().__init__(
             hass,
@@ -239,17 +254,21 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
         self.client = client
         self.device_name = name
         self.subentry_id = subentry_id
+        self.balance_hours = balance_hours
         self.last_error: str | None = None
         self._store: Store = Store(hass, 1, f"{DOMAIN}.modem.{subentry_id}")
-        self._restored: ModemInfo | None = None
+        self._saved: dict[str, Any] = {}
+        self._slow_at = 0.0
 
     @property
     def host(self) -> str:
         return self.client.host
 
     async def async_restore(self) -> None:
-        saved = await self._store.async_load() or {}
-        self._restored = ModemInfo(last_by_slot=saved.get("last_by_slot", {}))
+        self._saved = await self._store.async_load() or {}
+
+    def _save(self) -> None:
+        self._store.async_delay_save(lambda: dict(self._saved), 30)
 
     async def _async_update_data(self) -> ModemInfo:
         try:
@@ -257,14 +276,76 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
         except TandemError as err:
             self.last_error = str(err)
             raise UpdateFailed(str(err)) from err
-        info = parse_status(out, self.data or self._restored)
+        previous = self.data or ModemInfo(
+            last_by_slot=self._saved.get("last_by_slot", {})
+        )
+        info = parse_status(out, previous)
+        if info.last_by_slot != self._saved.get("last_by_slot"):
+            self._saved["last_by_slot"] = info.last_by_slot
+            self._save()
+
+        request = balance_request_for(info.operator)
+        info.balance_supported = request is not None
+        now = time.time()
+        asked = self._saved.get("balance_requested")
+        waiting = asked is not None and now - asked < self.REPLY_WAIT_S
+        if (
+            request
+            and self.balance_hours
+            and (asked is None or now - asked > self.balance_hours * 3600)
+        ):
+            await self._request_balance(request)
+            waiting = True
+        if waiting or now - self._slow_at > self.SLOW_EVERY_S:
+            self._slow_at = now
+            await self._read_slow(request)
+        info.balance = self._saved.get("balance")
+        info.balance_text = self._saved.get("balance_text", "")
+        info.balance_when = self._saved.get("balance_when", "")
+        info.balance_requested = self._saved.get("balance_requested")
+        info.failover = self._saved.get("failover", {})
         self.last_error = None
-        previous = (self.data or self._restored or ModemInfo()).last_by_slot
-        if info.last_by_slot != previous:
-            self._store.async_delay_save(
-                lambda: {"last_by_slot": info.last_by_slot}, 60
-            )
         return info
+
+    async def _read_slow(self, request: tuple[str, str] | None) -> None:
+        try:
+            messages = await self.client.read_sms()
+            amount, msg = parse_balance(messages, request[0] if request else None)
+            if msg is not None and msg.get("ts") != self._saved.get("balance_ts"):
+                self._saved.update(
+                    balance=amount,
+                    balance_text=msg["text"][:300],
+                    balance_when=msg["when"],
+                    balance_ts=msg.get("ts"),
+                )
+                self._save()
+        except TandemError as err:
+            _LOGGER.debug("SMS inbox not read: %s", err)
+        try:
+            failover = await self.client.failover_mode()
+            if failover and failover != self._saved.get("failover"):
+                self._saved["failover"] = failover
+                self._save()
+        except TandemError as err:
+            _LOGGER.debug("failover settings not read: %s", err)
+
+    async def _request_balance(self, request: tuple[str, str]) -> None:
+        number, text = request
+        try:
+            await self.client.send_sms(number, text)
+        except TandemError as err:
+            _LOGGER.warning("Balance request SMS not sent: %s", err)
+            return
+        self._saved["balance_requested"] = time.time()
+        self._save()
+
+    async def async_request_balance(self) -> None:
+        info = self.data
+        request = balance_request_for(info.operator) if info else None
+        if request is None:
+            raise TandemError("no balance request known for this operator")
+        await self._request_balance(request)
+        await self.async_request_refresh()
 
     async def async_select_sim(self, slot: int) -> None:
         await self.client.select_sim(slot)

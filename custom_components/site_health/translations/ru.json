@@ -311,6 +311,18 @@
       },
       "switch_port_power": {
         "name": "Порт {port} PoE"
+      },
+      "modem_balance": {
+        "name": "Баланс"
+      },
+      "modem_failover": {
+        "name": "Автопереключение (Ping Check)",
+        "state": {
+          "off": "выключено",
+          "reconnect": "перезапуск соединения",
+          "sim2": "переход на SIM 2",
+          "sim1": "переход на SIM 1"
+        }
       }
     },
     "binary_sensor": {
@@ -345,6 +357,9 @@
       },
       "switch_port_restart": {
         "name": "Перезапустить порт {port}"
+      },
+      "modem_balance_request": {
+        "name": "Запросить баланс"
       }
     }
   },

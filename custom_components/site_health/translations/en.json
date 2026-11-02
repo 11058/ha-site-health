@@ -311,6 +311,18 @@
       },
       "switch_port_power": {
         "name": "Port {port} PoE"
+      },
+      "modem_balance": {
+        "name": "Balance"
+      },
+      "modem_failover": {
+        "name": "Ping check",
+        "state": {
+          "off": "off",
+          "reconnect": "reconnect",
+          "sim2": "switch to SIM 2",
+          "sim1": "switch to SIM 1"
+        }
       }
     },
     "binary_sensor": {
@@ -345,6 +357,9 @@
       },
       "switch_port_restart": {
         "name": "Restart port {port}"
+      },
+      "modem_balance_request": {
+        "name": "Request balance"
       }
     }
   },

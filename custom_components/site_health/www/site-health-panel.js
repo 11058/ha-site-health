@@ -47,6 +47,9 @@ const QUALITY = { good: ["good", "хороший"], fair: ["warn", "средни
 // Comments written by this integration look like "Family: Name -> VLAN 30 (HA)".
 const cleanComment = (c) => String(c || "").replace(/^(Family|Admin):\s*/, "")
   .replace(/\s*->\s*VLAN \d+.*$/, "").trim();
+const nameOf = (c) => (c && (c.alias || cleanComment(c.comment) || c.hostname)) || "";
+const FAILOVER = { "": "выключено", reconnect: "перезапуск соединения", sim1: "переход на SIM 1",
+  sim2: "переход на SIM 2" };
 const dot = (ok) =>
   `<span class="dot ${ok === true ? "ok" : ok === false ? "bad" : "unk"}"></span>`;
 const placeOf = (c) => (c.family ? "family" : c.admin ? "admin" : null);
@@ -270,9 +273,14 @@ class SiteHealthPanel extends HTMLElement {
         : `<div class="muted">Нет настроенных объектов. Добавьте интеграцию Site Health.</div>`;
     } else {
       const focus = this.shadowRoot.activeElement && this.shadowRoot.activeElement.id;
+      if (focus === "nmedit") return;  // never re-render under the user's typing
       body.innerHTML = (this._error ? `<div class="error">${esc(this._error)}</div>` : "")
         + this._sites.map((s) => this._site(s)).join("");
       this._bind(body);
+      if (this._editing) {
+        const ne = this.shadowRoot.getElementById("nmedit");
+        if (ne) { ne.focus(); ne.setSelectionRange(ne.value.length, ne.value.length); }
+      }
       if (focus === "q") {
         const q = this.shadowRoot.getElementById("q");
         if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
@@ -345,6 +353,9 @@ class SiteHealthPanel extends HTMLElement {
         ? `${esc(last.operator || "?")}, ${esc(last.sim_status || "")} — когда была активной` : "не использовалась, состояние неизвестно"}</div>`);
     }
     let actions = "";
+    if (this._admin && m.online && i.balance_supported) {
+      actions += `<button class="act" data-do="balance" data-modem="${esc(m.subentry_id)}" ${this._busy.has(`bal${m.subentry_id}`) ? "disabled" : ""}>Запросить баланс</button>`;
+    }
     if (this._admin && m.online) {
       for (let k = 1; k <= slots; k++) {
         if (k === i.active_sim) continue;
@@ -373,6 +384,12 @@ class SiteHealthPanel extends HTMLElement {
           <tr><td>Сигнал <span class="${qc}">${ql}</span></td><td class="${qc}">RSRP ${val(i.rsrp, " дБм")} · SINR ${val(i.sinr, " дБ")}
             <div class="sub">RSRQ ${val(i.rsrq, " дБ")} · RSSI ${val(i.rssi, " дБм")} · ${val(i.signal_pct, "%")}</div></td></tr>
           <tr><td>Температура</td><td>${val(i.temperature, " °C")}</td></tr>
+          <tr><td>Баланс</td><td>${i.balance !== null && i.balance !== undefined
+            ? `<b class="${i.balance < 100 ? "warn" : ""}">${i.balance} ₽</b> <span class="sub">${esc(i.balance_when || "")}</span>`
+            : i.balance_supported ? '<span class="sub">ждём ответ оператора…</span>' : '<span class="sub">для этого оператора запрос не настроен</span>'}
+            ${i.balance_text ? `<div class="sub">${esc(i.balance_text)}</div>` : ""}</td></tr>
+          <tr><td>Автопереключение</td><td>${esc(FAILOVER[(i.failover || {}).sim1_control || ""] || (i.failover || {}).sim1_control)}${
+            (i.failover || {}).sim1_host1 ? ` <span class="sub">пинг ${esc(i.failover.sim1_host1)} каждые ${esc(i.failover.sim1_ping)} с, тайм-аут ${esc(i.failover.sim1_timeout)} с</span>` : ""}</td></tr>
         </table>
         ${others.join("")}
         ${actions ? `<div class="actions">${actions}</div>` : ""}`}
@@ -416,7 +433,7 @@ class SiteHealthPanel extends HTMLElement {
 
   _whoIs(s, mac) {
     const c = s.clients.find((x) => x.mac === mac);
-    if (c) return cleanComment(c.comment) || c.hostname || c.ip || mac;
+    if (c) return nameOf(c) || c.ip || mac;
     const n = (s.neighbors || []).find((x) => x.mac === mac);
     if (n) return n.identity || mac;
     for (const d of [s.core, ...s.devices]) {
@@ -533,6 +550,17 @@ class SiteHealthPanel extends HTMLElement {
       <button class="act" data-do="wizard" data-place="admin" ${ent}>В админы</button>`;
   }
 
+  _nameCell(s, c, name) {
+    if (this._editing && this._editing.mac === c.mac) {
+      return `${dot(c.online ? true : null)} <input class="nm" id="nmedit" value="${esc(this._editing.value)}" placeholder="Имя (можно по-русски)">
+        <button class="act primary" data-do="name-save" data-mac="${esc(c.mac)}" data-entry="${esc(s.entry_id)}">✓</button>
+        <button class="act" data-do="name-cancel">✕</button>`;
+    }
+    const pen = this._admin ? ` <button class="pen" data-do="name-edit" data-mac="${esc(c.mac)}" title="Подписать">✎</button>` : "";
+    const hint = c.alias && c.hostname && c.alias !== c.hostname ? ` <span class="sub">(${esc(c.hostname)})</span>` : "";
+    return `${dot(c.online ? true : null)} <b>${esc(name || c.mac)}</b>${hint}${pen}`;
+  }
+
   _clients(s) {
     const all = s.clients;
     const counts = {};
@@ -553,12 +581,12 @@ class SiteHealthPanel extends HTMLElement {
       undefined, { numeric: true }));
 
     const rows = list.map((c) => {
-      const name = cleanComment(c.comment) || c.hostname || "";
+      const name = nameOf(c);
       const waiting = placeOf(c) && c.online && c.segment_kind !== placeOf(c)
         ? `<div class="sub warn">ещё в сети «${esc(SEG_LABEL[c.segment_kind] || c.segment_kind)}» — переподключится</div>` : "";
       return `
         <tr class="${c.online ? "" : "off"}">
-          <td>${dot(c.online ? true : null)} <b>${esc(name || c.mac)}</b>
+          <td>${this._nameCell(s, c, name)}
             <div class="sub">${esc(c.mac)}${c.random_mac ? " · частный MAC" : ""}${c.static_lease ? " · статика" : ""}</div>${waiting}</td>
           <td>${esc(c.ip || "—")}<div class="sub">${esc(SEG_LABEL[c.segment_kind] || "")}</div></td>
           <td class="sub c-if">${c.wireless ? `📶 ${esc(c.ssid || c.wifi_interface)}` : esc(c.interface || "")}</td>
@@ -595,6 +623,14 @@ class SiteHealthPanel extends HTMLElement {
         this._filter = q.value;
         clearTimeout(this._qt);
         this._qt = setTimeout(() => this._render(), 250);
+      });
+    }
+    const ne = root.querySelector("#nmedit");
+    if (ne) {
+      ne.addEventListener("input", () => { if (this._editing) this._editing.value = ne.value; });
+      ne.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") root.querySelector('[data-do="name-save"]').click();
+        if (ev.key === "Escape") { this._editing = null; this._render(); }
       });
     }
     const on = root.querySelector("#online");
@@ -640,6 +676,22 @@ class SiteHealthPanel extends HTMLElement {
           this._call(msg, `${c.sw}:${c.idx}`);
           return;
         }
+        case "name-edit": {
+          const site0 = this._sites.find((x) => x.clients.some((c) => c.mac === d.mac));
+          const c = site0 && site0.clients.find((x) => x.mac === d.mac);
+          this._editing = { mac: d.mac, value: c ? (c.alias || nameOf(c)) : "" };
+          break;
+        }
+        case "name-cancel": this._editing = null; break;
+        case "name-save": {
+          const val = this._editing ? this._editing.value : "";
+          this._editing = null;
+          this._call({ type: "site_health/set_name", mac: d.mac, name: val, entry_id: d.entry }, d.mac);
+          return;
+        }
+        case "balance":
+          this._call({ type: "site_health/modem_balance", modem: d.modem }, `bal${d.modem}`);
+          return;
         case "wizard":
           this._openWizard(site(b), d.mac, d.place);
           return;
@@ -657,7 +709,7 @@ class SiteHealthPanel extends HTMLElement {
     const ua = navigator.userAgent;
     this._wiz = {
       entry: site.entry_id, mac, place, step: 1, done: false, chosen: null,
-      name: cleanComment(c.comment) || c.hostname || "",
+      name: nameOf(c),
       hostname: c.hostname || "", ssid: c.ssid || "",
       platform: /iPhone|iPad|Mac/.test(ua) && !/Android/.test(ua) ? "ios" : /Android/.test(ua) ? "android" : "ios",
       started: Date.now(), result: null, error: "",
@@ -737,7 +789,7 @@ class SiteHealthPanel extends HTMLElement {
       const cands = this._candidates();
       const rows = cands.map((c, i) => `
         <tr class="${i === 0 ? "best" : ""}">
-          <td><b>${esc(c.hostname || cleanComment(c.comment) || "без имени")}</b>
+          <td><b>${esc(nameOf(c) || "без имени")}</b>
             <div class="sub">${esc(c.mac)} · ${c.random_mac ? "частный MAC" : '<span class="good">настоящий MAC</span>'}${
               c.mac === w.mac ? " · тот же адрес" : ""}${w.hostname && c.hostname === w.hostname ? " · то же имя" : ""}</div></td>
           <td>${esc(c.ip || "")}<div class="sub">📶 ${esc(c.ssid || "")} ${c.signal_dbm ?? ""}</div></td>
@@ -771,7 +823,7 @@ class SiteHealthPanel extends HTMLElement {
       <label class="nm-row">Имя устройства (пойдёт в комментарий, латиницей):
         <input id="wname" value="${esc(w.name)}" placeholder="Например: iPhone Masha"></label>` : "";
     host.innerHTML = `<div class="overlay"><div class="dialog" role="dialog" aria-modal="true">
-      <div class="dlg-head">В ${esc(target)}: ${esc(orig.hostname || cleanComment(orig.comment) || w.mac)}
+      <div class="dlg-head">В ${esc(target)}: ${esc(nameOf(orig) || w.mac)}
         <button class="x" data-w="close" aria-label="Закрыть">✕</button></div>
       ${body}${nameRow}</div></div>`;
     host.querySelectorAll("[data-w]").forEach((b) => b.addEventListener("click", () => {
@@ -844,6 +896,9 @@ const STYLE = `
     border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 13px; margin: 2px 0 2px 4px; }
   .act.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
   .act[disabled] { opacity: .5; cursor: not-allowed; }
+  .pen { border: none; background: transparent; color: var(--secondary-text-color); cursor: pointer; font-size: 13px; padding: 0 4px; }
+  .nm { width: 180px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--divider-color);
+    background: var(--secondary-background-color); color: var(--primary-text-color); }
   .ports { display:flex; flex-wrap: wrap; gap: 6px; }
   .port { display:flex; flex-direction: column; align-items:center; min-width: 64px; padding: 6px 4px;
     border-radius: 8px; border: 1px solid var(--divider-color); background: var(--secondary-background-color);

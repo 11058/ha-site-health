@@ -45,3 +45,45 @@ def test_connecting_and_no_sim():
     info = tandem.parse_status(out)
     assert info.connecting and info.connected is False
     assert info.sim_status == "ABSENT" and info.registered is None
+
+
+def _hex16(text: str) -> str:
+    return "".join(f"{ord(ch):04X}" for ch in text)
+
+
+def test_decode_and_glue_sms():
+    raw = [
+        {"sender": "000100", "dcs": 2, "data": _hex16("Баланс: 123,45р. "),
+         "c_ref": 7, "c_tot": 2, "c_seq": 1, "ts": 100,
+         "date": "02.11", "time": "12:00"},
+        {"sender": "000100", "dcs": 2, "data": _hex16("Тариф Интернет"),
+         "c_ref": 7, "c_tot": 2, "c_seq": 2, "ts": 100},
+        {"sender": "MegaFon", "dcs": 0, "data": "Hello", "ts": 50},
+    ]  # fmt: skip
+    msgs = tandem.decode_sms(raw)
+    assert msgs[0]["text"] == "Баланс: 123,45р. Тариф Интернет"
+    assert msgs[1]["text"] == "Hello"
+    amount, msg = tandem.parse_balance(msgs, "000100")
+    assert amount == 123.45 and msg["sender"] == "000100"
+
+
+def test_balance_variants():
+    msgs = [{"sender": "000100", "text": "Ваш баланс -12.5 руб.", "ts": 1, "when": ""}]
+    assert tandem.parse_balance(msgs, "000100")[0] == -12.5
+    msgs = [{"sender": "000100", "text": "На счете 340 р", "ts": 1, "when": ""}]
+    assert tandem.parse_balance(msgs, "000100")[0] == 340
+    assert tandem.parse_balance([], "000100") == (None, None)
+    assert tandem.balance_request_for("MegaFon") == ("000100", "Баланс")
+    assert tandem.balance_request_for("Unknown") is None
+
+
+def test_failover_form():
+    html = (
+        '<select name="cbid.cm.modem0.sim1_control"><option value="">Disabled</option>'
+        '<option value="reconnect" selected="selected">Restart</option></select>'
+        '<input name="cbid.cm.modem0.sim1_ping" value="10" />'
+    )
+    assert tandem.parse_failover(html) == {
+        "sim1_control": "reconnect",
+        "sim1_ping": "10",
+    }
