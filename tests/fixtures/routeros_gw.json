@@ -105,7 +105,7 @@
   },
   {
    ".id": "*15",
-   "name": "wg-Dom",
+   "name": "wg-SRVPRM",
    "type": "wg",
    "running": "true",
    "disabled": "false"
@@ -196,7 +196,7 @@
    ".id": "*6",
    "address": "10.255.0.6/24",
    "network": "10.255.0.0",
-   "interface": "wg-Dom",
+   "interface": "wg-SRVPRM",
    "disabled": "false",
    "dynamic": "false",
    "invalid": "false"
@@ -270,8 +270,8 @@
  "wg_peers": [
   {
    ".id": "*1",
-   "name": "dom-hub",
-   "interface": "wg-Dom",
+   "name": "srvprm-hub",
+   "interface": "wg-SRVPRM",
    "public-key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
    "current-endpoint-address": "203.0.113.1",
    "last-handshake": "1m45s",

@@ -34,6 +34,7 @@ def test_parse_duration(parsers, text, seconds):
         ("72.2Mbps", 72.2),
         ("", None),
         ("garbage", None),
+        ("573500000", 573.5),
     ],
 )
 def test_parse_rate(parsers, text, mbps):
@@ -96,13 +97,14 @@ def test_probes(parsers, gw):
 
 def test_tunnels(parsers, gw):
     tunnels = parsers.parse_tunnels(gw["wg_peers"], stale_s=180)
-    dom = tunnels["dom_hub"]
-    assert dom.connected and not dom.dial_in
-    assert dom.handshake_age_s == 105
+    hub = tunnels["srvprm_hub"]
+    assert hub.connected and not hub.dial_in
+    assert hub.handshake_age_s == 105
     phone = tunnels["admin_phone"]
     assert phone.dial_in and not phone.connected
     assert (
-        parsers.parse_tunnels(gw["wg_peers"], stale_s=60)["dom_hub"].connected is False
+        parsers.parse_tunnels(gw["wg_peers"], stale_s=60)["srvprm_hub"].connected
+        is False
     )
 
 

@@ -206,7 +206,8 @@ class SiteHealthPanel extends HTMLElement {
           <tr>
             <td><b>${esc(d.name)}</b> → ${esc(l.peer_name || l.mac)}<div class="sub">${esc(l.interface)} ${esc(l.ssid)}</div></td>
             <td class="num ${signalClass(l.signal_dbm)}">${l.signal_dbm ?? "—"} дБм</td>
-            <td class="num sub">${l.tx_rate_mbps ?? "—"} / ${l.rx_rate_mbps ?? "—"} Мбит/с</td>
+            <td class="num sub">${l.tx_rate_mbps ?? "—"} / ${l.rx_rate_mbps ?? "—"} Мбит/с
+              <div>трафик ↓ ${mbps(l.rx_bps)} ↑ ${mbps(l.tx_bps)}</div></td>
             <td class="num sub">${dur(l.uptime_s)}</td>
           </tr>`);
       }

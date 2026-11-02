@@ -96,6 +96,8 @@ class RadioLink:
     uptime_s: int | None = None
     band: str = ""
     peer_name: str = ""
+    rx_bps: float | None = None
+    tx_bps: float | None = None
 
 
 @dataclass

@@ -107,7 +107,10 @@ def parse_rate_mbps(value: Any) -> float | None:
     """'866.6Mbps-80MHz/2S/SGI' -> 866.6; '1.2Gbps' -> 1200.0."""
     if not value:
         return None
-    match = _RATE.match(str(value))
+    text = str(value).strip()
+    if text.isdigit():  # RouterOS 7.2x: plain bits per second
+        return round(int(text) / 1_000_000, 1)
+    match = _RATE.match(text)
     if not match:
         return None
     number, prefix = float(match.group(1)), match.group(2).upper()
@@ -310,6 +313,8 @@ def parse_radio_links(
             uptime_s=parse_duration_int(row.get("uptime")),
             band=str(row.get("band", "")),
             peer_name=peer_names.get(mac, ""),
+            rx_bps=as_float(row.get("rx-bits-per-second")),
+            tx_bps=as_float(row.get("tx-bits-per-second")),
         )
     return result
 

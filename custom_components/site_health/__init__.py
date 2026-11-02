@@ -61,6 +61,22 @@ class SiteRuntime:
     def all(self) -> list[DeviceCoordinator]:
         return [self.site, *self.devices.values()]
 
+    def peer_names(self) -> dict[str, str]:
+        """MAC -> name for radio link peers: neighbours plus our own devices.
+
+        The neighbour table only knows the MAC a device shows the core
+        router; the far end of a radio link sees the device's wifi MAC,
+        which the device itself reports among its interfaces.
+        """
+        names = self.site.peer_names()
+        for coord in self.all():
+            if coord.data is None:
+                continue
+            for iface in coord.data.interfaces.values():
+                if iface.mac:
+                    names.setdefault(iface.mac, coord.device_name)
+        return names
+
 
 type SiteHealthConfigEntry = ConfigEntry[SiteRuntime]
 
@@ -112,7 +128,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
             name=sub.title,
             interval_s=interval,
             subentry_id=sub_id,
-            peer_names=site.peer_names,
+            peer_names=lambda: runtime.peer_names(),
         )
         # A radio being down must not keep the whole site from loading.
         await coord.async_refresh()

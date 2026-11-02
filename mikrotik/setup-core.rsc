@@ -46,6 +46,6 @@
 :if ([:len [/tool netwatch find name="wan-1.1.1.1"]] = 0) do={
   /tool netwatch add name="wan-1.1.1.1" host=1.1.1.1 type=icmp interval=30s comment="Internet via 1.1.1.1"
 }
-:if ([:len [/tool netwatch find name="dom-wg"]] = 0) do={
-  /tool netwatch add name="dom-wg" host=10.255.0.1 type=icmp interval=30s comment="WireGuard to Dom"
+:if ([:len [/tool netwatch find name="srvprm-wg"]] = 0) do={
+  /tool netwatch add name="srvprm-wg" host=10.255.0.1 type=icmp interval=30s comment="WireGuard to SRVPRM hub"
 }
