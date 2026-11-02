@@ -1,0 +1,34 @@
+"""Refresh button on each device."""
+
+from __future__ import annotations
+
+from homeassistant.components.button import ButtonEntity
+from homeassistant.const import EntityCategory
+from homeassistant.core import HomeAssistant
+
+from . import SiteHealthConfigEntry
+from .coordinator import DeviceCoordinator
+from .dynamic import setup_dynamic
+from .entity import SiteHealthEntity
+
+
+class RefreshButton(SiteHealthEntity, ButtonEntity):
+    _attr_translation_key = "refresh"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DeviceCoordinator) -> None:
+        super().__init__(coordinator, "refresh")
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_request_refresh()
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: SiteHealthConfigEntry, async_add_entities
+) -> None:
+    setup_dynamic(
+        entry,
+        entry.runtime_data.all(),
+        async_add_entities,
+        lambda c: [("refresh", lambda: RefreshButton(c))],
+    )

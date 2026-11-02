@@ -1,0 +1,245 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Core router",
+        "description": "Site name and the router that runs DHCP, Wi-Fi and the uplinks. RouterOS REST (www-ssl) must be enabled and allowed from Home Assistant. Further MikroTik devices are added afterwards with “Add device”.",
+        "data": {
+          "site_name": "Site name",
+          "host": "Address",
+          "username": "Username",
+          "password": "Password",
+          "tls": "HTTPS (www-ssl)",
+          "port": "Port (0 = default)",
+          "verify_ssl": "Verify certificate"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-enter credentials",
+        "description": "{host} rejected the stored credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "Core router connection",
+        "data": {
+          "host": "Address",
+          "username": "Username",
+          "password": "Password",
+          "tls": "HTTPS (www-ssl)",
+          "port": "Port (0 = default)",
+          "verify_ssl": "Verify certificate"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot reach the RouterOS REST API (is www-ssl enabled and allowed from Home Assistant?)",
+      "invalid_auth": "Username or password rejected",
+      "not_routeros": "The device answered but does not look like RouterOS"
+    },
+    "abort": {
+      "already_configured": "This router is already added",
+      "reauth_successful": "Credentials updated",
+      "reconfigure_successful": "Saved"
+    }
+  },
+  "config_subentries": {
+    "device": {
+      "entry_type": "MikroTik device",
+      "initiate_flow": {
+        "user": "Add device"
+      },
+      "step": {
+        "user": {
+          "title": "Add MikroTik device",
+          "description": "The core router sees {count} MikroTik neighbours not added yet. Pick one or enter an address.",
+          "data": {
+            "device": "Device"
+          }
+        },
+        "credentials": {
+          "title": "{name} {host}",
+          "description": "Login for this device. Create a read-only user (group with read, api, rest-api) allowed only from Home Assistant.",
+          "data": {
+            "host": "Address",
+            "username": "Username",
+            "password": "Password",
+            "tls": "HTTPS (www-ssl)",
+            "port": "Port (0 = default)",
+            "verify_ssl": "Verify certificate"
+          }
+        },
+        "reconfigure": {
+          "title": "{host}",
+          "data": {
+            "host": "Address",
+            "username": "Username",
+            "password": "Password",
+            "tls": "HTTPS (www-ssl)",
+            "port": "Port (0 = default)",
+            "verify_ssl": "Verify certificate"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Cannot reach the RouterOS REST API (is www-ssl enabled and allowed from Home Assistant?)",
+        "invalid_auth": "Username or password rejected",
+        "not_routeros": "The device answered but does not look like RouterOS"
+      },
+      "abort": {
+        "already_configured": "This device is already added",
+        "reconfigure_successful": "Saved"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "data": {
+          "scan_interval": "Poll interval, s",
+          "family_vlan": "Family VLAN id",
+          "wg_stale_seconds": "WireGuard handshake considered lost after, s"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "boot_time": {
+        "name": "Boot time"
+      },
+      "cpu_load": {
+        "name": "CPU load"
+      },
+      "memory": {
+        "name": "Memory used"
+      },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "version": {
+        "name": "RouterOS version"
+      },
+      "link_signal": {
+        "name": "{peer} signal"
+      },
+      "link_tx_rate": {
+        "name": "{peer} TX rate"
+      },
+      "link_rx_rate": {
+        "name": "{peer} RX rate"
+      },
+      "wan_ip": {
+        "name": "{wan} IP"
+      },
+      "wan_rx": {
+        "name": "{wan} download"
+      },
+      "wan_tx": {
+        "name": "{wan} upload"
+      },
+      "probe_rtt": {
+        "name": "{probe} ping"
+      },
+      "probe_loss": {
+        "name": "{probe} loss"
+      },
+      "tunnel_handshake": {
+        "name": "{tunnel} last handshake"
+      },
+      "clients_total": {
+        "name": "Clients online"
+      },
+      "family_devices": {
+        "name": "Family devices"
+      },
+      "clients_family": {
+        "name": "Clients: Family"
+      },
+      "clients_guest": {
+        "name": "Clients: Guests"
+      },
+      "clients_iot": {
+        "name": "Clients: IoT"
+      },
+      "clients_video": {
+        "name": "Clients: Video"
+      },
+      "clients_admin": {
+        "name": "Clients: Admin"
+      },
+      "clients_mgmt": {
+        "name": "Clients: Management"
+      },
+      "clients_switches": {
+        "name": "Clients: Switches"
+      },
+      "clients_dmz": {
+        "name": "Clients: DMZ"
+      },
+      "clients_other": {
+        "name": "Clients: Other"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      },
+      "wan": {
+        "name": "{wan}"
+      },
+      "probe": {
+        "name": "{probe}"
+      },
+      "tunnel": {
+        "name": "{tunnel}"
+      }
+    },
+    "button": {
+      "refresh": {
+        "name": "Refresh"
+      }
+    }
+  },
+  "services": {
+    "add_family_device": {
+      "name": "Add to family",
+      "description": "Map a Wi-Fi MAC to the family VLAN on the core router (access-list) and make the client reconnect.",
+      "fields": {
+        "mac": {
+          "name": "MAC",
+          "description": "Client MAC address"
+        },
+        "name": {
+          "name": "Name",
+          "description": "Stored as the rule comment (transliterated)"
+        },
+        "entry_id": {
+          "name": "Site",
+          "description": "Only needed with several sites"
+        }
+      }
+    },
+    "remove_family_device": {
+      "name": "Remove from family",
+      "description": "Delete the family access-list entry; the client falls back to the guest VLAN.",
+      "fields": {
+        "mac": {
+          "name": "MAC",
+          "description": "Client MAC address"
+        },
+        "entry_id": {
+          "name": "Site",
+          "description": "Only needed with several sites"
+        }
+      }
+    },
+    "refresh": {
+      "name": "Refresh",
+      "description": "Poll every device now"
+    }
+  }
+}

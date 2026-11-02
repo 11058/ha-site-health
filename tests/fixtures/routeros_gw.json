@@ -1,0 +1,417 @@
+{
+ "identity": {
+  "name": "GW"
+ },
+ "resource": {
+  "architecture-name": "arm64",
+  "board-name": "hAP ax^3",
+  "cpu-load": "7",
+  "free-memory": "805306368",
+  "total-memory": "1073741824",
+  "free-hdd-space": "100663296",
+  "total-hdd-space": "134217728",
+  "uptime": "3d4h5m6s",
+  "version": "7.25 (stable)"
+ },
+ "routerboard": {
+  "model": "C53UiG+5HPaxD2HPaxD",
+  "serial-number": "HXXXXXXXX1",
+  "current-firmware": "7.25"
+ },
+ "health": [
+  {
+   ".id": "*D",
+   "name": "cpu-temperature",
+   "type": "C",
+   "value": "52"
+  }
+ ],
+ "interfaces": [
+  {
+   ".id": "*1",
+   "name": "ether1-SW",
+   "type": "ether",
+   "running": "true",
+   "disabled": "false",
+   "mac-address": "02:00:00:00:00:01",
+   "rx-byte": "1000000",
+   "tx-byte": "2000000",
+   "link-downs": "0"
+  },
+  {
+   ".id": "*4",
+   "name": "ether4-WAN1",
+   "type": "ether",
+   "running": "true",
+   "disabled": "false",
+   "comment": "Main ISP WAN1",
+   "mac-address": "02:00:00:00:00:04",
+   "rx-byte": "5000000",
+   "tx-byte": "1000000",
+   "link-downs": "2"
+  },
+  {
+   ".id": "*3",
+   "name": "ether3-WAN2",
+   "type": "ether",
+   "running": "false",
+   "disabled": "false",
+   "comment": "Reserve ISP",
+   "mac-address": "02:00:00:00:00:03",
+   "rx-byte": "0",
+   "tx-byte": "0"
+  },
+  {
+   ".id": "*10",
+   "name": "br-LAN",
+   "type": "bridge",
+   "running": "true",
+   "disabled": "false",
+   "mac-address": "02:00:00:00:00:10",
+   "rx-byte": "0",
+   "tx-byte": "0"
+  },
+  {
+   ".id": "*11",
+   "name": "vlan20-IoT",
+   "type": "vlan",
+   "running": "true",
+   "disabled": "false",
+   "mac-address": "02:00:00:00:00:10"
+  },
+  {
+   ".id": "*12",
+   "name": "vlan30-Family",
+   "type": "vlan",
+   "running": "true",
+   "disabled": "false",
+   "mac-address": "02:00:00:00:00:10"
+  },
+  {
+   ".id": "*13",
+   "name": "vlan40-Guest",
+   "type": "vlan",
+   "running": "true",
+   "disabled": "false",
+   "mac-address": "02:00:00:00:00:10"
+  },
+  {
+   ".id": "*14",
+   "name": "vlan99-Admin",
+   "type": "vlan",
+   "running": "true",
+   "disabled": "false",
+   "mac-address": "02:00:00:00:00:10"
+  },
+  {
+   ".id": "*15",
+   "name": "wg-Dom",
+   "type": "wg",
+   "running": "true",
+   "disabled": "false"
+  }
+ ],
+ "vlans": [
+  {
+   "name": "vlan20-IoT",
+   "vlan-id": "20",
+   "interface": "br-LAN"
+  },
+  {
+   "name": "vlan30-Family",
+   "vlan-id": "30",
+   "interface": "br-LAN"
+  },
+  {
+   "name": "vlan40-Guest",
+   "vlan-id": "40",
+   "interface": "br-LAN"
+  },
+  {
+   "name": "vlan99-Admin",
+   "vlan-id": "99",
+   "interface": "br-LAN"
+  }
+ ],
+ "addresses": [
+  {
+   ".id": "*1",
+   "address": "10.5.1.1/24",
+   "network": "10.5.1.0",
+   "interface": "br-LAN",
+   "disabled": "false",
+   "dynamic": "false",
+   "invalid": "false"
+  },
+  {
+   ".id": "*2",
+   "address": "10.5.20.1/24",
+   "network": "10.5.20.0",
+   "interface": "vlan20-IoT",
+   "disabled": "false",
+   "dynamic": "false",
+   "invalid": "false"
+  },
+  {
+   ".id": "*3",
+   "address": "10.5.30.1/24",
+   "network": "10.5.30.0",
+   "interface": "vlan30-Family",
+   "disabled": "false",
+   "dynamic": "false",
+   "invalid": "false"
+  },
+  {
+   ".id": "*4",
+   "address": "10.5.40.1/24",
+   "network": "10.5.40.0",
+   "interface": "vlan40-Guest",
+   "disabled": "false",
+   "dynamic": "false",
+   "invalid": "false"
+  },
+  {
+   ".id": "*5",
+   "address": "10.5.99.1/24",
+   "network": "10.5.99.0",
+   "interface": "vlan99-Admin",
+   "disabled": "false",
+   "dynamic": "false",
+   "invalid": "false"
+  },
+  {
+   ".id": "*6",
+   "address": "10.255.0.6/24",
+   "network": "10.255.0.0",
+   "interface": "wg-Dom",
+   "disabled": "false",
+   "dynamic": "false",
+   "invalid": "false"
+  },
+  {
+   ".id": "*7",
+   "address": "192.168.8.150/24",
+   "network": "192.168.8.0",
+   "interface": "ether4-WAN1",
+   "disabled": "false",
+   "dynamic": "true",
+   "invalid": "false"
+  }
+ ],
+ "dhcp_clients": [
+  {
+   ".id": "*1",
+   "interface": "ether4-WAN1",
+   "status": "bound",
+   "address": "192.168.8.150/24",
+   "gateway": "192.168.8.1",
+   "disabled": "false",
+   "comment": "Main ISP WAN1"
+  },
+  {
+   ".id": "*2",
+   "interface": "ether3-WAN2",
+   "status": "searching...",
+   "disabled": "true"
+  }
+ ],
+ "netwatch": [
+  {
+   ".id": "*1",
+   "name": "wan-8.8.8.8",
+   "host": "8.8.8.8",
+   "type": "icmp",
+   "status": "up",
+   "since": "2026-11-01 10:00:00",
+   "rtt-avg": "23ms456us",
+   "loss-percent": "0",
+   "disabled": "false"
+  },
+  {
+   ".id": "*2",
+   "host": "10.5.1.12",
+   "type": "simple",
+   "status": "down",
+   "comment": "SW-Garazh2",
+   "disabled": "false"
+  }
+ ],
+ "wg_peers": [
+  {
+   ".id": "*1",
+   "name": "dom-hub",
+   "interface": "wg-Dom",
+   "public-key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+   "current-endpoint-address": "203.0.113.1",
+   "last-handshake": "1m45s",
+   "rx": "266400",
+   "tx": "2703400",
+   "disabled": "false"
+  }
+ ],
+ "neighbors": [
+  {
+   ".id": "*1",
+   "interface": "vlan10-MGMT",
+   "address": "10.5.10.2",
+   "mac-address": "02:00:00:00:01:01",
+   "identity": "BS",
+   "platform": "MikroTik",
+   "board": "mANTBox ax 15s",
+   "version": "7.25 (stable)"
+  },
+  {
+   ".id": "*2",
+   "interface": "vlan10-MGMT",
+   "address": "10.5.10.5",
+   "mac-address": "02:00:00:00:01:05",
+   "identity": "BR-Banya",
+   "platform": "MikroTik",
+   "board": "SXTsq 5 ax",
+   "version": "7.25"
+  },
+  {
+   ".id": "*3",
+   "interface": "br-LAN",
+   "address": "10.5.1.10",
+   "mac-address": "02:00:00:00:02:10",
+   "identity": "SW-House",
+   "platform": "",
+   "board": ""
+  }
+ ],
+ "leases": [
+  {
+   ".id": "*1",
+   "address": "10.5.30.55",
+   "mac-address": "AA:00:00:00:00:01",
+   "host-name": "iPhone-Masha",
+   "server": "dhcp-users",
+   "status": "bound",
+   "last-seen": "12s",
+   "dynamic": "true"
+  },
+  {
+   ".id": "*2",
+   "address": "10.5.40.77",
+   "mac-address": "AA:00:00:00:00:02",
+   "host-name": "Galaxy-S24",
+   "server": "dhcp-guest",
+   "status": "bound",
+   "last-seen": "2m3s",
+   "dynamic": "true"
+  },
+  {
+   ".id": "*3",
+   "address": "10.5.20.5",
+   "mac-address": "AA:00:00:00:00:03",
+   "host-name": "homeassistant",
+   "server": "dhcp-iot",
+   "status": "bound",
+   "last-seen": "30s",
+   "dynamic": "false",
+   "comment": "Home Assistant"
+  },
+  {
+   ".id": "*4",
+   "address": "10.5.40.80",
+   "mac-address": "AA:00:00:00:00:04",
+   "host-name": "old-laptop",
+   "server": "dhcp-guest",
+   "status": "waiting",
+   "last-seen": "3d2h",
+   "dynamic": "true"
+  }
+ ],
+ "arp": [
+  {
+   ".id": "*1",
+   "address": "10.5.20.5",
+   "mac-address": "AA:00:00:00:00:03",
+   "interface": "vlan20-IoT",
+   "status": "reachable",
+   "dynamic": "true",
+   "complete": "true"
+  },
+  {
+   ".id": "*2",
+   "address": "10.5.20.54",
+   "mac-address": "AA:00:00:00:00:05",
+   "interface": "vlan20-IoT",
+   "status": "stale",
+   "dynamic": "true",
+   "complete": "true"
+  },
+  {
+   ".id": "*3",
+   "address": "10.5.10.2",
+   "mac-address": "02:00:00:00:01:01",
+   "interface": "vlan10-MGMT",
+   "status": "reachable",
+   "dynamic": "true",
+   "complete": "true"
+  }
+ ],
+ "registrations": [
+  {
+   ".id": "*1",
+   "interface": "wifi-5G",
+   "mac-address": "AA:00:00:00:00:01",
+   "ssid": "Beregovaya3",
+   "signal": "-58",
+   "tx-rate": "866.6Mbps-80MHz/2S",
+   "rx-rate": "780Mbps-80MHz/2S",
+   "uptime": "1h2m3s",
+   "band": "5ghz-ax"
+  },
+  {
+   ".id": "*2",
+   "interface": "cap-yard-2G",
+   "mac-address": "AA:00:00:00:00:02",
+   "ssid": "Beregovaya3",
+   "signal": "-71",
+   "tx-rate": "72.2Mbps",
+   "rx-rate": "65Mbps",
+   "uptime": "5m"
+  }
+ ],
+ "access_list": [
+  {
+   ".id": "*1",
+   "action": "accept",
+   "mac-address": "60:00:00:00:00:99",
+   "vlan-id": "99",
+   "comment": "Admin laptop -> VLAN 99",
+   "disabled": "false"
+  },
+  {
+   ".id": "*2",
+   "action": "accept",
+   "mac-address": "AA:00:00:00:00:01",
+   "vlan-id": "30",
+   "comment": "Family: iPhone Masha -> VLAN 30 (HA)",
+   "disabled": "false"
+  },
+  {
+   ".id": "*3",
+   "action": "accept",
+   "mac-address": "AA:00:00:00:00:09",
+   "vlan-id": "30",
+   "comment": "Family: Tablet (offline)",
+   "disabled": "false"
+  }
+ ],
+ "radio_registrations": [
+  {
+   ".id": "*1",
+   "interface": "wifi-5G",
+   "mac-address": "02:00:00:00:01:05",
+   "signal": "-62",
+   "tx-rate": "432.2Mbps-40MHz/2S",
+   "rx-rate": "390Mbps-40MHz/2S",
+   "uptime": "2d1h",
+   "ssid": "brdgBeregovaya3",
+   "band": "5ghz-ax"
+  }
+ ]
+}

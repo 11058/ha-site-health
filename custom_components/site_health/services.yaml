@@ -1,0 +1,32 @@
+add_family_device:
+  fields:
+    mac:
+      required: true
+      example: "AA:BB:CC:DD:EE:FF"
+      selector:
+        text:
+    name:
+      required: false
+      example: "Phone Masha"
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: site_health
+
+remove_family_device:
+  fields:
+    mac:
+      required: true
+      example: "AA:BB:CC:DD:EE:FF"
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: site_health
+
+refresh:

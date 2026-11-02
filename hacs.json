@@ -1,0 +1,7 @@
+{
+  "name": "Site Health",
+  "content_in_root": false,
+  "render_readme": true,
+  "homeassistant": "2026.2.0",
+  "zip_release": false
+}

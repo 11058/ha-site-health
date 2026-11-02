@@ -1,0 +1,82 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+
+  ruff:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check --output-format=github
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: format --check
+
+  tests:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pytest
+      - run: pytest tests -q
+
+  imports:
+    name: import against Home Assistant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      # hassfest checks the manifest, not the code. Importing every module
+      # against a real core is what catches helper functions moving between
+      # releases, which is how this integration first failed to load.
+      - run: pip install homeassistant
+      - name: Import every module
+        run: |
+          python - <<'EOF'
+          import importlib, sys
+          sys.path.insert(0, ".")
+          modules = [
+              "const", "models", "parsers", "mikrotik", "coordinator", "dynamic",
+              "entity", "config_flow", "sensor", "binary_sensor", "button",
+              "websocket_api", "panel", "diagnostics", "",
+          ]
+          failed = []
+          for name in modules:
+              full = "custom_components.site_health" + (f".{name}" if name else "")
+              try:
+                  importlib.import_module(full)
+                  print("ok  ", full)
+              except Exception as err:
+                  print("FAIL", full, "->", type(err).__name__, err)
+                  failed.append(full)
+          sys.exit(1 if failed else 0)
+          EOF
