@@ -18,7 +18,9 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_AUTO_CONFIGURE,
     CONF_FAMILY_VLAN,
+    CONF_HA_IP,
     CONF_HOST,
     CONF_PASSWORD,
     CONF_PORT,
@@ -28,6 +30,7 @@ from .const import (
     CONF_USERNAME,
     CONF_VERIFY_SSL,
     CONF_WG_STALE,
+    DEFAULT_AUTO_CONFIGURE,
     DEFAULT_FAMILY_VLAN,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_WG_STALE,
@@ -36,8 +39,44 @@ from .const import (
 )
 from .mikrotik import MikrotikAuthError, MikrotikError
 from .parsers import mikrotik_candidates
+from .provision import USERNAME, new_password, onboarding_script
 
 MANUAL = "__manual__"
+METHOD = "method"
+METHOD_SCRIPT = "script"
+METHOD_MANUAL = "manual"
+
+
+def _method_selector() -> selector.SelectSelector:
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[METHOD_SCRIPT, METHOD_MANUAL],
+            translation_key="method",
+            mode=selector.SelectSelectorMode.LIST,
+        )
+    )
+
+
+async def _ha_ip(hass: HomeAssistant, target: str) -> str:
+    """The address the router will see HA connect from."""
+    from homeassistant.components import network
+
+    try:
+        return await network.async_get_source_ip(hass, target_ip=target)
+    except Exception:
+        return ""
+
+
+def _generated(host: str, ha_ip: str) -> dict[str, Any]:
+    return {
+        CONF_HOST: host,
+        CONF_USERNAME: USERNAME,
+        CONF_PASSWORD: new_password(),
+        CONF_TLS: True,
+        CONF_PORT: 0,
+        CONF_VERIFY_SSL: False,
+        CONF_HA_IP: ha_ip,
+    }
 
 
 def _addr(data: Mapping[str, Any]) -> str:
@@ -102,26 +141,77 @@ class SiteHealthConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> dict[str, type[ConfigSubentryFlow]]:
         return {SUBENTRY_DEVICE: DeviceSubentryFlow}
 
+    def __init__(self) -> None:
+        self._data: dict[str, Any] = {}
+
     async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            host = user_input[CONF_HOST].strip()
+            await self.async_set_unique_id(host)
+            self._abort_if_unique_id_configured()
+            ha_ip = await _ha_ip(self.hass, host)
+            self._data = {
+                CONF_SITE_NAME: user_input[CONF_SITE_NAME],
+                **_generated(host, ha_ip),
+            }
+            if user_input[METHOD] == METHOD_SCRIPT:
+                return await self.async_step_onboard()
+            return await self.async_step_manual()
+        schema = {
+            vol.Required(CONF_SITE_NAME): str,
+            vol.Required(CONF_HOST): str,
+            vol.Required(METHOD, default=METHOD_SCRIPT): _method_selector(),
+        }
+        return self.async_show_form(step_id="user", data_schema=vol.Schema(schema))
+
+    async def _finish(self) -> ConfigFlowResult:
+        err, ident = await _probe(self.hass, self._data)
+        if err:
+            return err  # type: ignore[return-value]
+        title = self._data.get(CONF_SITE_NAME) or ident["name"]
+        return self.async_create_entry(title=title, data=self._data)
+
+    async def async_step_onboard(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            err, ident = await _probe(self.hass, user_input)
-            if err:
-                errors["base"] = err
-            else:
-                await self.async_set_unique_id(user_input[CONF_HOST])
-                self._abort_if_unique_id_configured()
-                title = user_input.get(CONF_SITE_NAME) or ident["name"]
-                return self.async_create_entry(title=title, data=user_input)
-        defaults = user_input or {}
-        schema = {
-            vol.Required(CONF_SITE_NAME, default=defaults.get(CONF_SITE_NAME, "")): str,
-            **_conn_schema(defaults),
-        }
+            result = await self._finish()
+            if not isinstance(result, str):
+                return result
+            errors["base"] = result
         return self.async_show_form(
-            step_id="user", data_schema=vol.Schema(schema), errors=errors
+            step_id="onboard",
+            data_schema=vol.Schema({}),
+            errors=errors,
+            description_placeholders={
+                "host": self._data[CONF_HOST],
+                "ha_ip": self._data[CONF_HA_IP] or "?",
+                "script": onboarding_script(
+                    ha_ip=self._data[CONF_HA_IP] or "HA_IP",
+                    password=self._data[CONF_PASSWORD],
+                    core=True,
+                ),
+            },
+        )
+
+    async def async_step_manual(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            self._data.update(user_input)
+            result = await self._finish()
+            if not isinstance(result, str):
+                return result
+            errors["base"] = result
+        return self.async_show_form(
+            step_id="manual",
+            data_schema=vol.Schema(_conn_schema(user_input or {}, with_host=False)),
+            errors=errors,
+            description_placeholders={"host": self._data[CONF_HOST]},
         )
 
     async def async_step_reauth(
@@ -189,6 +279,10 @@ class SiteHealthOptionsFlow(OptionsFlow):
             vol.Optional(
                 CONF_WG_STALE, default=o.get(CONF_WG_STALE, DEFAULT_WG_STALE)
             ): vol.All(vol.Coerce(int), vol.Range(min=30, max=3600)),
+            vol.Optional(
+                CONF_AUTO_CONFIGURE,
+                default=o.get(CONF_AUTO_CONFIGURE, DEFAULT_AUTO_CONFIGURE),
+            ): bool,
         }
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))
 
@@ -197,8 +291,9 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
     """Add one more MikroTik (radio, AP, switch) with its own login."""
 
     def __init__(self) -> None:
-        self._host: str | None = None
         self._title: str = ""
+        self._method: str = METHOD_SCRIPT
+        self._data: dict[str, Any] = {}
 
     def _known(self) -> set[str]:
         """host:port of the core router and every added device."""
@@ -228,11 +323,12 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         candidates = self._candidates()
         if user_input is not None:
+            self._method = user_input[METHOD]
             choice = user_input["device"]
-            if choice != MANUAL:
-                self._host = choice
-                self._title = candidates.get(choice, choice).split(" — ")[0]
-            return await self.async_step_credentials()
+            if choice == MANUAL:
+                return await self.async_step_address()
+            self._title = candidates.get(choice, choice).split(" — ")[0]
+            return await self._route(choice)
         options = [
             selector.SelectOptionDict(value=host, label=label)
             for host, label in candidates.items()
@@ -242,7 +338,8 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
             {
                 vol.Required("device"): selector.SelectSelector(
                     selector.SelectSelectorConfig(options=options)
-                )
+                ),
+                vol.Required(METHOD, default=METHOD_SCRIPT): _method_selector(),
             }
         )
         return self.async_show_form(
@@ -251,32 +348,78 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
             description_placeholders={"count": str(len(candidates))},
         )
 
+    async def async_step_address(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        if user_input is not None:
+            return await self._route(user_input[CONF_HOST].strip())
+        return self.async_show_form(
+            step_id="address",
+            data_schema=vol.Schema({vol.Required(CONF_HOST): str}),
+        )
+
+    async def _route(self, host: str) -> SubentryFlowResult:
+        core = self._get_entry().data
+        ha_ip = core.get(CONF_HA_IP) or await _ha_ip(self.hass, host)
+        self._data = _generated(host, ha_ip)
+        if _addr(self._data) in self._known():
+            return self.async_abort(reason="already_configured")
+        if self._method == METHOD_SCRIPT:
+            return await self.async_step_onboard()
+        return await self.async_step_credentials()
+
+    async def _finish(self) -> SubentryFlowResult | str:
+        err, ident = await _probe(self.hass, self._data)
+        if err:
+            return err
+        return self.async_create_entry(
+            title=ident.get("name") or self._title or self._data[CONF_HOST],
+            data=self._data,
+            unique_id=_addr(self._data),
+        )
+
+    async def async_step_onboard(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            result = await self._finish()
+            if not isinstance(result, str):
+                return result
+            errors["base"] = result
+        return self.async_show_form(
+            step_id="onboard",
+            data_schema=vol.Schema({}),
+            errors=errors,
+            description_placeholders={
+                "host": self._data[CONF_HOST],
+                "name": self._title or self._data[CONF_HOST],
+                "script": onboarding_script(
+                    ha_ip=self._data[CONF_HA_IP] or "HA_IP",
+                    password=self._data[CONF_PASSWORD],
+                    core=False,
+                ),
+            },
+        )
+
     async def async_step_credentials(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            data = dict(user_input)
-            if self._host:
-                data[CONF_HOST] = self._host
-            if _addr(data) in self._known():
-                return self.async_abort(reason="already_configured")
-            err, ident = await _probe(self.hass, data)
-            if err:
-                errors["base"] = err
-            else:
-                return self.async_create_entry(
-                    title=ident.get("name") or self._title or data[CONF_HOST],
-                    data=data,
-                    unique_id=_addr(data),
-                )
+            self._data.update(user_input)
+            result = await self._finish()
+            if not isinstance(result, str):
+                return result
+            errors["base"] = result
         return self.async_show_form(
             step_id="credentials",
-            data_schema=vol.Schema(
-                _conn_schema(user_input or {}, with_host=self._host is None)
-            ),
+            data_schema=vol.Schema(_conn_schema(user_input or {}, with_host=False)),
             errors=errors,
-            description_placeholders={"host": self._host or "", "name": self._title},
+            description_placeholders={
+                "host": self._data[CONF_HOST],
+                "name": self._title or self._data[CONF_HOST],
+            },
         )
 
     async def async_step_reconfigure(

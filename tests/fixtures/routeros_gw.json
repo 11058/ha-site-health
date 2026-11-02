@@ -109,6 +109,14 @@
    "type": "wg",
    "running": "true",
    "disabled": "false"
+  },
+  {
+   ".id": "*16",
+   "name": "vlan10-MGMT",
+   "type": "vlan",
+   "running": "true",
+   "disabled": "false",
+   "mac-address": "02:00:00:00:00:10"
   }
  ],
  "vlans": [
@@ -130,6 +138,11 @@
   {
    "name": "vlan99-Admin",
    "vlan-id": "99",
+   "interface": "br-LAN"
+  },
+  {
+   "name": "vlan10-MGMT",
+   "vlan-id": "10",
    "interface": "br-LAN"
   }
  ],
@@ -195,6 +208,15 @@
    "interface": "ether4-WAN1",
    "disabled": "false",
    "dynamic": "true",
+   "invalid": "false"
+  },
+  {
+   ".id": "*8",
+   "address": "10.5.10.1/24",
+   "network": "10.5.10.0",
+   "interface": "vlan10-MGMT",
+   "disabled": "false",
+   "dynamic": "false",
    "invalid": "false"
   }
  ],
@@ -412,6 +434,47 @@
    "uptime": "2d1h",
    "ssid": "brdgBeregovaya3",
    "band": "5ghz-ax"
+  }
+ ],
+ "filter": [
+  {
+   ".id": "*1",
+   "chain": "forward",
+   "action": "accept",
+   "connection-state": "established,related",
+   "disabled": "false",
+   "comment": "fwd-accept-established"
+  },
+  {
+   ".id": "*2",
+   "chain": "forward",
+   "action": "drop",
+   "connection-state": "invalid",
+   "disabled": "false",
+   "comment": "fwd-drop-invalid"
+  },
+  {
+   ".id": "*3",
+   "chain": "forward",
+   "action": "accept",
+   "src-address-list": "ADMIN-DEVICES",
+   "disabled": "false",
+   "comment": "fwd-admin-full"
+  },
+  {
+   ".id": "*4",
+   "chain": "forward",
+   "action": "drop",
+   "in-interface": "vlan20-IoT",
+   "disabled": "false",
+   "comment": "fwd-iot-drop-lan"
+  },
+  {
+   ".id": "*5",
+   "chain": "input",
+   "action": "drop",
+   "disabled": "false",
+   "comment": "input-drop-all"
   }
  ]
 }

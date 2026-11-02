@@ -3,15 +3,11 @@
     "step": {
       "user": {
         "title": "Core router",
-        "description": "Site name and the router that runs DHCP, Wi-Fi and the uplinks. RouterOS REST (www-ssl) must be enabled and allowed from Home Assistant. Further MikroTik devices are added afterwards with “Add device”.",
+        "description": "The router that runs DHCP, Wi-Fi and the uplinks. With “Generate a script” you get a ready block to paste into its terminal (HA address and a random password filled in); the rest — forward rule to the radios, internet probes — the integration sets up itself.",
         "data": {
           "site_name": "Site name",
-          "host": "Address",
-          "username": "Username",
-          "password": "Password",
-          "tls": "HTTPS (www-ssl)",
-          "port": "Port (0 = default)",
-          "verify_ssl": "Verify certificate"
+          "host": "Router address",
+          "method": "How to connect"
         }
       },
       "reauth_confirm": {
@@ -32,10 +28,24 @@
           "port": "Port (0 = default)",
           "verify_ssl": "Verify certificate"
         }
+      },
+      "onboard": {
+        "title": "Paste into the router terminal",
+        "description": "Open a terminal on **{host}** (Winbox → New Terminal or SSH) and paste the block below. It enables HTTPS (www-ssl) for Home Assistant **{ha_ip}** only, creates the user `ha-infra` with a random password and a firewall rule. Then press Submit.\n\n```\n{script}\n```"
+      },
+      "manual": {
+        "title": "Login for {host}",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "tls": "HTTPS (www-ssl)",
+          "port": "Port (0 = default)",
+          "verify_ssl": "Verify certificate"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Cannot reach the RouterOS REST API (is www-ssl enabled and allowed from Home Assistant?)",
+      "cannot_connect": "Cannot reach the RouterOS REST API. Was the block pasted completely? Check that www-ssl is enabled and HA's address is allowed.",
       "invalid_auth": "Username or password rejected",
       "not_routeros": "The device answered but does not look like RouterOS"
     },
@@ -56,12 +66,13 @@
           "title": "Add MikroTik device",
           "description": "The core router sees {count} MikroTik neighbours not added yet. Pick one or enter an address.",
           "data": {
-            "device": "Device"
+            "device": "Device",
+            "method": "How to connect"
           }
         },
         "credentials": {
           "title": "{name} {host}",
-          "description": "Login for this device. Create a read-only user (group with read, api, rest-api) allowed only from Home Assistant.",
+          "description": "Login for this device.",
           "data": {
             "host": "Address",
             "username": "Username",
@@ -81,10 +92,20 @@
             "port": "Port (0 = default)",
             "verify_ssl": "Verify certificate"
           }
+        },
+        "address": {
+          "title": "Device address",
+          "data": {
+            "host": "Address"
+          }
+        },
+        "onboard": {
+          "title": "{name}: paste into the terminal",
+          "description": "Open a terminal on **{host}** (from Winbox: Neighbors, or `/system ssh {host}` from the core router) and paste. Read-only user `ha-infra` with a random password; HTTPS for Home Assistant only.\n\n```\n{script}\n```"
         }
       },
       "error": {
-        "cannot_connect": "Cannot reach the RouterOS REST API (is www-ssl enabled and allowed from Home Assistant?)",
+        "cannot_connect": "Cannot reach the RouterOS REST API. Was the block pasted completely? Check that www-ssl is enabled and HA's address is allowed.",
         "invalid_auth": "Username or password rejected",
         "not_routeros": "The device answered but does not look like RouterOS"
       },
@@ -101,7 +122,8 @@
         "data": {
           "scan_interval": "Poll interval, s",
           "family_vlan": "Family VLAN id",
-          "wg_stale_seconds": "WireGuard handshake considered lost after, s"
+          "wg_stale_seconds": "WireGuard handshake considered lost after, s",
+          "auto_configure": "Configure the core router automatically (forward rule to radios, internet probes)"
         }
       }
     }
@@ -240,6 +262,14 @@
     "refresh": {
       "name": "Refresh",
       "description": "Poll every device now"
+    }
+  },
+  "selector": {
+    "method": {
+      "options": {
+        "script": "Generate a script to paste",
+        "manual": "I already have a login"
+      }
     }
   }
 }

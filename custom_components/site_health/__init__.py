@@ -18,7 +18,9 @@ from homeassistant.helpers.typing import ConfigType
 from .const import (
     ATTR_MAC,
     ATTR_NAME,
+    CONF_AUTO_CONFIGURE,
     CONF_FAMILY_VLAN,
+    CONF_HA_IP,
     CONF_HOST,
     CONF_PASSWORD,
     CONF_PORT,
@@ -28,6 +30,7 @@ from .const import (
     CONF_USERNAME,
     CONF_VERIFY_SSL,
     CONF_WG_STALE,
+    DEFAULT_AUTO_CONFIGURE,
     DEFAULT_FAMILY_VLAN,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_WG_STALE,
@@ -119,8 +122,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
 
     entry.runtime_data = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    if opts.get(CONF_AUTO_CONFIGURE, DEFAULT_AUTO_CONFIGURE):
+        entry.async_create_background_task(
+            hass, _async_provision(hass, entry, runtime), f"{DOMAIN} provision"
+        )
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     return True
+
+
+async def _async_provision(
+    hass: HomeAssistant, entry: SiteHealthConfigEntry, runtime: SiteRuntime
+) -> None:
+    """Set up the rest on the core router (forward rule, probes), once per load."""
+    from homeassistant.components import persistent_notification
+
+    from .provision import async_provision_core
+
+    site = runtime.site.site
+    ha_ip = entry.data.get(CONF_HA_IP)
+    if not site or not ha_ip:
+        return
+    result = await async_provision_core(
+        runtime.site.client,
+        ha_ip=ha_ip,
+        neighbors=site.neighbors.values(),
+        segments=site.segments,
+    )
+    if not result.done and not result.failed:
+        return
+    lines = [f"- added: {x}" for x in result.done]
+    lines += [f"- **failed**: {x}" for x in result.failed]
+    persistent_notification.async_create(
+        hass,
+        "Site Health configured the core router "
+        f"{entry.data.get('host')}:\n\n" + "\n".join(lines),
+        title=f"Site Health: {entry.title}",
+        notification_id=f"{DOMAIN}_{entry.entry_id}_provision",
+    )
+    if result.done:
+        for coord in runtime.all():
+            await coord.async_request_refresh()
 
 
 async def _async_reload(hass: HomeAssistant, entry: SiteHealthConfigEntry) -> None:

@@ -112,6 +112,7 @@ def test_segments(parsers, gw):
     kinds = {s.network: s.kind for s in segs.values()}
     assert kinds == {
         "10.5.1.0/24": "switches",
+        "10.5.10.0/24": "mgmt",
         "10.5.20.0/24": "iot",
         "10.5.30.0/24": "family",
         "10.5.40.0/24": "guest",

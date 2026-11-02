@@ -13,10 +13,14 @@ CONF_PASSWORD = "password"
 CONF_TLS = "tls"
 CONF_VERIFY_SSL = "verify_ssl"
 
+CONF_HA_IP = "ha_ip"
+
 # Options.
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_FAMILY_VLAN = "family_vlan"
 CONF_WG_STALE = "wg_stale_seconds"
+CONF_AUTO_CONFIGURE = "auto_configure"
+DEFAULT_AUTO_CONFIGURE = True
 
 DEFAULT_SCAN_INTERVAL = 30
 DEFAULT_FAMILY_VLAN = 30
