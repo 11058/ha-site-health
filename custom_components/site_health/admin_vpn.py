@@ -162,12 +162,11 @@ def free_address(
     net = ipaddress.ip_network(admin_net)
     used: set[int] = set()
     for p in peers:
+        # Only addresses inside the admin network count: a tunnel peer allowed
+        # 10.0.0.0/8 or 0.0.0.0/0 does not take every host of it.
         for n in _networks(p.get("allowed-address", "")):
-            if n.subnet_of(net) or net.subnet_of(n):
-                used.update(
-                    int(h)
-                    for h in (n.hosts() if n.prefixlen < 32 else [n.network_address])
-                )
+            if n.subnet_of(net):
+                used.update(int(a) for a in n)
     for row in leases:
         with contextlib.suppress(ValueError):
             used.add(int(ipaddress.ip_address(str(row.get("address", "")))))

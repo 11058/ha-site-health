@@ -72,6 +72,8 @@ def test_admin_interface_by_name_then_by_peers():
 def test_free_address_top_first_skips_used_and_pool():
     ip = vpn.free_address("10.5.99.0/24", peers=GW_PEERS)
     assert ip == "10.5.99.252"
+    wide = [*GW_PEERS, {"allowed-address": "10.0.0.0/8,0.0.0.0/0"}]
+    assert vpn.free_address("10.5.99.0/24", peers=wide) == "10.5.99.252"
     ip = vpn.free_address(
         "10.5.99.0/24",
         peers=GW_PEERS,
