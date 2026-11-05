@@ -449,7 +449,7 @@ class SiteHealthPanel extends HTMLElement {
       const sys = d.system || {};
       return `
         <tr>
-          <td>${dot(d.online)} <b>${esc(d.name)}</b><div class="sub">${esc(role)} · ${esc(d.host)}</div></td>
+          <td>${dot(d.online)} <b>${esc(sys.identity || d.name)}</b><div class="sub">${esc(role)} · ${esc(d.host)}</div></td>
           <td class="sub">${esc(sys.model || sys.board || "")}<br>${esc(sys.version || "")}</td>
           <td class="num">${sys.cpu_load ?? "—"}% CPU${
             sys.temperature !== null && sys.temperature !== undefined ? `<br>${sys.temperature} °C` : ""}</td>
@@ -471,18 +471,25 @@ class SiteHealthPanel extends HTMLElement {
       ...(s.switches || []).map((w) => w.host)]);
     const watched = s.probes.filter((p) => !known.has(p.host)
       && (switchNets.some((n) => inNet(p.host, n)) || s.segments.some((g) => g.kind === "mgmt" && inNet(p.host, g.network))));
-    const extra = watched.map((p) => `
+    // Same columns as real devices: name, model/version (from the neighbour
+    // table), what HA knows, state. Only "ping" is known for these.
+    const extra = watched.map((p) => {
+      const nb = (s.neighbors || []).find((n) => n.address === p.host) || {};
+      const short = (nb.identity || p.name.split(" - ")[0]).trim();
+      const kind = switchNets.some((n) => inNet(p.host, n)) ? "коммутатор" : nb.platform === "MikroTik" ? "MikroTik" : "устройство";
+      return `
         <tr>
-          <td>${dot(p.up)} <b>${esc(p.name)}</b><div class="sub">${
-            switchNets.some((n) => inNet(p.host, n)) ? "коммутатор" : "устройство"} · ${esc(p.host)}</div></td>
-          <td class="sub" colspan="2">по проверке netwatch на роутере</td>
+          <td>${dot(p.up)} <b>${esc(short)}</b><div class="sub">${kind} · ${esc(p.host)}</div></td>
+          <td class="sub">${esc(nb.board || "")}${nb.version ? `<br>${esc(nb.version)}` : ""}</td>
+          <td class="num sub">не добавлен в HA<br>только ping</td>
           <td class="num sub">${p.up ? "на связи" : p.up === false ? "не отвечает" : "—"}${
             this._admin && !p.up ? (this._confirm && this._confirm.probe === p.host
               ? `<br><span class="sub">Убрать проверку с роутера?</span>
                  <button class="act primary" data-do="probe-rm" data-host="${esc(p.host)}" data-entry="${esc(s.entry_id)}">Да</button>
                  <button class="act" data-do="cancel">Нет</button>`
               : `<br><button class="act" data-do="probe-ask" data-host="${esc(p.host)}" title="Устройства больше нет: удалить его netwatch на роутере">Убрать</button>`) : ""}</td>
-        </tr>`).join("");
+        </tr>`;
+    }).join("");
     return `
       <section class="card">
         <h2>Устройства</h2>
