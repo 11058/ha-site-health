@@ -93,16 +93,74 @@ def device_networks(
 
 
 def first_forward_drop(rules: list[dict]) -> str | None:
-    """Insert point: before the first forward drop/reject that is not 'invalid'."""
-    for rule in rules:
-        if rule.get("chain") != "forward" or as_bool(rule.get("disabled")):
-            continue
+    """Where HA's accept rules belong: before the first forward drop/reject.
+
+    Disabled drops count too: a firewall that was switched off as a whole
+    and switched on again keeps its order, and our rules must already be
+    above the drops by then. Without any drop, the top of the chain.
+    """
+    forward = [
+        r
+        for r in rules
+        if r.get("chain") == "forward" and not as_bool(r.get("dynamic"))
+    ]
+    for rule in forward:
         if rule.get("action") not in ("drop", "reject"):
             continue
         if "invalid" in str(rule.get("connection-state", "")):
             continue
         return rule.get(".id")
-    return None
+    return forward[0].get(".id") if forward else None
+
+
+def rule_state(rules: list[dict], comment: str) -> tuple[dict | None, bool]:
+    """(our rule, is it placed before the first drop?)"""
+    ours = next((r for r in rules if r.get("comment") == comment), None)
+    if ours is None:
+        return None, False
+    ids = [r.get(".id") for r in rules if r.get("chain") == "forward"]
+    before = first_forward_drop([r for r in rules if r is not ours])
+    if before is None or before not in ids or ours.get(".id") not in ids:
+        return ours, True
+    return ours, ids.index(ours.get(".id")) < ids.index(before)
+
+
+async def _ensure_forward(
+    client: MikrotikClient,
+    result: ProvisionResult,
+    *,
+    comment: str,
+    what: str,
+    payload: dict,
+    covered=None,
+) -> None:
+    """Add the rule above the drops, or move it there if it slid below."""
+    rules = await client._list("ip/firewall/filter")
+    ours, placed = rule_state(rules, comment)
+    if ours is None and covered is not None and any(covered(r) for r in rules):
+        result.already.append(what)
+        return
+    if ours is None:
+        before = first_forward_drop(rules)
+        body = {**payload, "comment": comment}
+        if before:
+            body["place-before"] = before
+        await client._request("PUT", "ip/firewall/filter", body)
+        result.done.append(what)
+        return
+    if as_bool(ours.get("disabled")):
+        result.failed.append(f"{what}: the rule is disabled on the router")
+        return
+    if placed:
+        result.already.append(what)
+        return
+    before = first_forward_drop([r for r in rules if r is not ours])
+    await client._request(
+        "POST",
+        "ip/firewall/filter/move",
+        {"numbers": ours.get(".id"), "destination": before},
+    )
+    result.done.append(f"{what} (moved above the drop rules)")
 
 
 async def async_provision_core(
@@ -112,98 +170,87 @@ async def async_provision_core(
     neighbors: Iterable[Neighbor],
     segments: dict[str, Segment],
 ) -> ProvisionResult:
-    """Idempotent setup on the core router after HA has its login."""
+    """Idempotent setup on the core router; safe to run every few minutes."""
     result = ProvisionResult()
+    ha = ipaddress.ip_address(ha_ip)
 
     # 1. HA -> REST of radios/APs in other subnets.
-    try:
-        rules = await client._list("ip/firewall/filter")
-        before = first_forward_drop(rules)
-        for net in device_networks(neighbors, segments, ha_ip):
-            comment = f"{COMMENT_TAG}: HA REST -> {net}"
-            what = f"forward HA -> {net}:443"
-            if any(r.get("comment") == comment for r in rules):
-                result.already.append(what)
-                continue
-            payload = {
-                "chain": "forward",
-                "action": "accept",
-                "protocol": "tcp",
-                "dst-port": "443",
-                "src-address": ha_ip,
-                "dst-address": net,
-                "comment": comment,
-            }
-            if before:
-                payload["place-before"] = before
-            await client._request("PUT", "ip/firewall/filter", payload)
-            result.done.append(what)
-    except MikrotikError as err:
-        _LOGGER.warning("Could not add the forward rule: %s", err)
-        result.failed.append(f"forward rule: {err}")
+    for net in device_networks(neighbors, segments, ha_ip):
+        what = f"forward HA -> {net}:443"
+        try:
+            await _ensure_forward(
+                client,
+                result,
+                comment=f"{COMMENT_TAG}: HA REST -> {net}",
+                what=what,
+                payload={
+                    "chain": "forward",
+                    "action": "accept",
+                    "protocol": "tcp",
+                    "dst-port": "443",
+                    "src-address": ha_ip,
+                    "dst-address": net,
+                },
+            )
+        except MikrotikError as err:
+            _LOGGER.warning("Could not set up %s: %s", what, err)
+            result.failed.append(f"{what}: {err}")
 
     # 1b. HA -> web of the switches (their management lives in VLAN 1).
-    try:
-        rules = await client._list("ip/firewall/filter")
-        before = first_forward_drop(rules)
-        ha = ipaddress.ip_address(ha_ip)
-        for seg in segments.values():
-            net = ipaddress.ip_network(seg.network)
-            if seg.kind != "switches" or ha in net:
-                continue
-            comment = f"{COMMENT_TAG}: HA web -> switches {seg.network}"
-            what = f"forward HA -> {seg.network}:80"
-            if any(r.get("comment") == comment for r in rules):
-                result.already.append(what)
-                continue
-            payload = {
-                "chain": "forward",
-                "action": "accept",
-                "protocol": "tcp",
-                "dst-port": "80",
-                "src-address": ha_ip,
-                "dst-address": seg.network,
-                "comment": comment,
-            }
-            if before:
-                payload["place-before"] = before
-            await client._request("PUT", "ip/firewall/filter", payload)
-            result.done.append(what)
-    except MikrotikError as err:
-        _LOGGER.warning("Could not add the switch web rule: %s", err)
-        result.failed.append(f"switch web rule: {err}")
+    for seg in segments.values():
+        if seg.kind != "switches" or ha in ipaddress.ip_network(seg.network):
+            continue
+        what = f"forward HA -> {seg.network}:80"
+        try:
+            await _ensure_forward(
+                client,
+                result,
+                comment=f"{COMMENT_TAG}: HA web -> switches {seg.network}",
+                what=what,
+                payload={
+                    "chain": "forward",
+                    "action": "accept",
+                    "protocol": "tcp",
+                    "dst-port": "80",
+                    "src-address": ha_ip,
+                    "dst-address": seg.network,
+                },
+            )
+        except MikrotikError as err:
+            _LOGGER.warning("Could not set up %s: %s", what, err)
+            result.failed.append(f"{what}: {err}")
 
     # 1c. HA -> ASIC miners (their web/API for the ASIC Fleet integration).
-    try:
-        rules = await client._list("ip/firewall/filter")
-        before = first_forward_drop(rules)
-        for seg in segments.values():
-            if seg.kind != "asic":
-                continue
-            comment = f"{COMMENT_TAG}: HA -> ASIC {seg.network}"
-            what = f"forward HA -> {seg.network}"
-            if any(r.get("comment") == comment for r in rules) or any(
+    for seg in segments.values():
+        if seg.kind != "asic":
+            continue
+        what = f"forward HA -> {seg.network}"
+
+        def covered(r: dict, seg: Segment = seg) -> bool:
+            return (
                 r.get("src-address") == ha_ip
                 and r.get("out-interface") == seg.interface
                 and r.get("action") == "accept"
-                for r in rules
-            ):
-                result.already.append(what)
-                continue
-            payload = {
-                "chain": "forward",
-                "action": "accept",
-                "src-address": ha_ip,
-                "dst-address": seg.network,
-                "comment": comment,
-            }
-            if before:
-                payload["place-before"] = before
-            await client._request("PUT", "ip/firewall/filter", payload)
-            result.done.append(what)
-    except MikrotikError as err:
-        _LOGGER.warning("Could not add the ASIC rule: %s", err)
-        result.failed.append(f"ASIC rule: {err}")
+                and not as_bool(r.get("disabled"))
+            )
+
+        try:
+            await _ensure_forward(
+                client,
+                result,
+                comment=f"{COMMENT_TAG}: HA -> ASIC {seg.network}",
+                what=what,
+                payload={
+                    "chain": "forward",
+                    "action": "accept",
+                    "src-address": ha_ip,
+                    "dst-address": seg.network,
+                },
+                covered=covered,
+            )
+        except MikrotikError as err:
+            _LOGGER.warning("Could not set up %s: %s", what, err)
+            result.failed.append(f"{what}: {err}")
 
     # 2. Internet reachability probes.
     try:

@@ -297,6 +297,7 @@ class SiteHealthPanel extends HTMLElement {
   _site(s) {
     return `
       <h1>${esc(s.title)}</h1>
+      ${this._access(s)}
       <div class="grid">
         ${this._channels(s)}
         ${(s.modems || []).map((m) => this._modem(s, m)).join("")}
@@ -305,6 +306,25 @@ class SiteHealthPanel extends HTMLElement {
       </div>
       ${(s.switches || []).map((w) => this._switch(s, w)).join("")}
       ${this._clients(s)}`;
+  }
+
+  _access(s) {
+    // HA reaches radios and switches only through the core router's firewall.
+    const p = s.provision || {};
+    const failed = p.failed || [];
+    const down = [...s.devices.filter((d) => !d.online), ...(s.switches || []).filter((w) => !w.online)];
+    const timeouts = down.filter((d) => /таймаут|timeout/i.test(d.error || ""));
+    const auth = down.filter((d) => /rejected|credentials|invalid_auth|парол/i.test(d.error || ""));
+    if (!failed.length && !timeouts.length && !auth.length) return "";
+    const items = failed.map((f) => `<li>${esc(f)}</li>`).join("");
+    const names = timeouts.map((d) => esc(d.name)).join(", ");
+    return `<div class="card warnbox">
+      ${timeouts.length ? `<div><b>Нет ответа от: ${names}.</b> Скорее всего, firewall роутера ${esc(s.core.name)} не пропускает к ним Home Assistant.
+        Интеграция сама проверяет свои разрешающие правила (комментарий «site-health:») каждые 10 минут и ставит их выше запрещающих.</div>` : ""}
+      ${auth.length ? `<div><b>Логин или пароль не подходит: ${auth.map((d) => esc(d.name)).join(", ")}.</b>
+        Новый пароль вводится в «Настройки → Устройства и службы → Site Health → ⋮ у устройства → Перенастроить».</div>` : ""}
+      ${items ? `<div>Не получилось на роутере:</div><ul>${items}</ul>` : ""}
+    </div>`;
   }
 
   _lteLine(l) {
@@ -562,7 +582,9 @@ class SiteHealthPanel extends HTMLElement {
     const place = placeOf(c);
     // Only Wi-Fi people go through the access list; IoT, cameras etc. are
     // placed by their SSID or switch port, so they get no buttons.
-    const managed = place || (c.wireless && c.segment_kind === "guest");
+    // Guests always get the buttons: a guest seen only by its DHCP lease
+    // (roamed to a CAP, asleep) is still someone to let in.
+    const managed = place || c.segment_kind === "guest";
     if (!managed) {
       return c.access_vlan ? `<span class="sub">VLAN ${c.access_vlan} (вручную)</span>` : "";
     }
@@ -908,6 +930,8 @@ const STYLE = `
   .acts { white-space: normal; }
   .sub { font-size: 12px; color: var(--secondary-text-color); }
   .muted { color: var(--secondary-text-color); padding: 8px; }
+  .warnbox { border-left: 4px solid var(--warning-color, #ffa600); margin-bottom: 12px; }
+  .warnbox ul { margin: 4px 0 0 18px; padding: 0; }
   .error { background: var(--error-color); color: #fff; padding: 8px 12px; border-radius: 8px; margin-bottom: 12px; }
   .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align: middle; }
   .dot.ok { background: var(--success-color, #2e7d32); }

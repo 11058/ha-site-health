@@ -94,7 +94,8 @@
             "tls": "HTTPS (www-ssl)",
             "port": "Port (0 = default)",
             "verify_ssl": "Verify certificate"
-          }
+          },
+          "description": "New address or login of this device. For the `ha-infra` user created by the onboarding block nothing changes when you change your own admin password."
         },
         "address": {
           "title": "Device address",
@@ -132,6 +133,15 @@
             "username": "Username",
             "password": "Password"
           }
+        },
+        "reconfigure": {
+          "title": "{name}: address and login",
+          "description": "Enter the new login after changing it on the 4G router.",
+          "data": {
+            "host": "Address",
+            "username": "Username",
+            "password": "Password"
+          }
         }
       },
       "error": {
@@ -140,7 +150,8 @@
         "not_tandem": "Answered, but this is not a Tandem modem page"
       },
       "abort": {
-        "already_configured": "Already added"
+        "already_configured": "Already added",
+        "reconfigure_successful": "Saved"
       }
     },
     "switch": {
@@ -164,6 +175,14 @@
             "host": "Address",
             "password": "Password"
           }
+        },
+        "reconfigure": {
+          "title": "{name}: address and password",
+          "description": "Enter the new password after changing it on the switch.",
+          "data": {
+            "host": "Address",
+            "password": "Password"
+          }
         }
       },
       "error": {
@@ -172,7 +191,8 @@
         "switch_busy": "Someone is logged into the switch web page right now — log out there and retry"
       },
       "abort": {
-        "already_configured": "Already added"
+        "already_configured": "Already added",
+        "reconfigure_successful": "Saved"
       }
     }
   },

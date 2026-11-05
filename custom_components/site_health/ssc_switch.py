@@ -27,6 +27,8 @@ from typing import Any
 import aiohttp
 from aiohttp import ClientError, ClientTimeout
 
+from .mikrotik import net_error_text
+
 _LOGGER = logging.getLogger(__name__)
 
 CMD_LOGIN = 123
@@ -267,7 +269,7 @@ class SscSwitchClient:
                 ) from err
             raise SwitchError(f"{self._host}: {err}") from err
         except (ClientError, TimeoutError, OSError) as err:
-            raise SwitchError(f"{self._host}: {err}") from err
+            raise SwitchError(f"{self._host}: {net_error_text(err)}") from err
         try:
             data = json.loads(text) if text.strip() else None
         except ValueError:

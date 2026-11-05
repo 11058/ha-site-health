@@ -464,7 +464,7 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
             errors["base"] = err
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema(_conn_schema(sub.data, with_host=False)),
+            data_schema=vol.Schema(_conn_schema(sub.data)),
             errors=errors,
             description_placeholders={"host": sub.data.get(CONF_HOST, "")},
         )
@@ -530,6 +530,51 @@ class ModemSubentryFlow(ConfigSubentryFlow):
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """New address or login of the 4G router (e.g. after a password change)."""
+        from homeassistant.helpers.aiohttp_client import async_create_clientsession
+
+        from .tandem import TandemAuthError, TandemClient, TandemError
+
+        sub = self._get_reconfigure_subentry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            data = {**sub.data, **user_input}
+            client = TandemClient(
+                async_create_clientsession(self.hass),
+                data[CONF_HOST],
+                data[CONF_USERNAME],
+                data[CONF_PASSWORD],
+            )
+            try:
+                await client.login()
+                await client.status()
+            except TandemAuthError:
+                errors["base"] = "invalid_auth"
+            except TandemError:
+                errors["base"] = "cannot_connect"
+            else:
+                return self.async_update_and_abort(self._get_entry(), sub, data=data)
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_HOST, default=sub.data.get(CONF_HOST, "")): str,
+                vol.Required(
+                    CONF_USERNAME, default=sub.data.get(CONF_USERNAME, "root")
+                ): str,
+                vol.Required(CONF_PASSWORD): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+            }
+        )
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"name": sub.title},
+        )
 
 
 class SwitchSubentryFlow(ConfigSubentryFlow):
@@ -628,4 +673,41 @@ class SwitchSubentryFlow(ConfigSubentryFlow):
             data_schema=vol.Schema(schema),
             errors=errors,
             description_placeholders={"host": self._host or ""},
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """New address or password of the switch web page."""
+        from . import make_switch_client
+        from .ssc_switch import SwitchAuthError, SwitchBusyError, SwitchError
+
+        sub = self._get_reconfigure_subentry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            data = {**sub.data, **user_input}
+            data[CONF_HOST] = data[CONF_HOST].strip()
+            try:
+                await make_switch_client(self.hass, data).check()
+            except SwitchBusyError:
+                errors["base"] = "switch_busy"
+            except SwitchAuthError:
+                errors["base"] = "invalid_auth"
+            except SwitchError:
+                errors["base"] = "cannot_connect"
+            else:
+                return self.async_update_and_abort(self._get_entry(), sub, data=data)
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_HOST, default=sub.data.get(CONF_HOST, "")): str,
+                vol.Required(CONF_PASSWORD): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+            }
+        )
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"name": sub.title},
         )

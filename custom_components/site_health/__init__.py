@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 import aiohttp
@@ -18,6 +20,7 @@ from homeassistant.helpers.aiohttp_client import (
     async_create_clientsession,
     async_get_clientsession,
 )
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
@@ -68,6 +71,8 @@ from .tandem import TandemClient, TandemError
 
 _LOGGER = logging.getLogger(__name__)
 
+PROVISION_INTERVAL = timedelta(minutes=10)
+
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -85,6 +90,8 @@ class SiteRuntime:
     # independent of what the router can store in its comments.
     names: dict[str, str] = field(default_factory=dict)
     names_store: Any = None
+    # Last provisioning pass on the core router: what is missing or broken.
+    provision: dict[str, Any] = field(default_factory=dict)
 
     def all(self) -> list[DeviceCoordinator]:
         return [self.site, *self.devices.values()]
@@ -190,11 +197,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
             subentry_id=sub_id,
             peer_names=lambda: runtime.peer_names(),
         )
-        # A radio being down must not keep the whole site from loading.
-        await coord.async_refresh()
         runtime.devices[sub_id] = coord
-        if coord.data:
-            site.infra_macs |= {i.mac for i in coord.data.interfaces.values() if i.mac}
 
     for sub_id, sub in entry.subentries.items():
         if sub.subentry_type != SUBENTRY_MODEM:
@@ -208,7 +211,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
             subentry_id=sub_id,
         )
         await modem.async_restore()
-        await modem.async_refresh()
         runtime.modems[sub_id] = modem
 
     for sub_id, sub in entry.subentries.items():
@@ -222,14 +224,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
             interval_s=interval,
             subentry_id=sub_id,
         )
-        await sw.async_refresh()
         runtime.switches[sub_id] = sw
+
+    # First polls side by side: a device behind a closed firewall times out,
+    # and one after another they would hold HA's startup for minutes.
+    # A device being down must not keep the whole site from loading.
+    await asyncio.gather(
+        *(c.async_refresh() for c in runtime.devices.values()),
+        *(m.async_refresh() for m in runtime.modems.values()),
+        *(w.async_refresh() for w in runtime.switches.values()),
+    )
+    for coord in runtime.devices.values():
+        if coord.data:
+            site.infra_macs |= {i.mac for i in coord.data.interfaces.values() if i.mac}
 
     entry.runtime_data = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     if opts.get(CONF_AUTO_CONFIGURE, DEFAULT_AUTO_CONFIGURE):
         entry.async_create_background_task(
             hass, _async_provision(hass, entry, runtime), f"{DOMAIN} provision"
+        )
+
+        # Again every few minutes: the owner may switch the firewall off and
+        # on, re-import it or reorder it; HA must not be locked out for good.
+        async def _again(_now) -> None:
+            await _async_provision(hass, entry, runtime)
+
+        entry.async_on_unload(
+            async_track_time_interval(hass, _again, PROVISION_INTERVAL)
         )
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     return True
@@ -253,7 +275,15 @@ async def _async_provision(
         neighbors=site.neighbors.values(),
         segments=site.segments,
     )
+    runtime.provision = {
+        "done": result.done,
+        "already": result.already,
+        "failed": result.failed,
+    }
     if not result.done and not result.failed:
+        persistent_notification.async_dismiss(
+            hass, f"{DOMAIN}_{entry.entry_id}_provision"
+        )
         return
     lines = [f"- added: {x}" for x in result.done]
     lines += [f"- **failed**: {x}" for x in result.failed]
@@ -265,7 +295,7 @@ async def _async_provision(
         notification_id=f"{DOMAIN}_{entry.entry_id}_provision",
     )
     if result.done:
-        for coord in runtime.all():
+        for coord in [*runtime.all(), *runtime.switches.values()]:
             await coord.async_request_refresh()
 
 

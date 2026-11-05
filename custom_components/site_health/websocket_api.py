@@ -96,6 +96,7 @@ def site_overview(hass: HomeAssistant) -> list[dict[str, Any]]:
                 "wifi_backend": site.wifi_backend if site else "",
                 "modems": [_modem_view(m) for m in runtime.modems.values()],
                 "switches": [_switch_view(w) for w in runtime.switches.values()],
+                "provision": runtime.provision,
                 "neighbors": [to_dict(n) for n in site.neighbors.values()]
                 if site
                 else [],

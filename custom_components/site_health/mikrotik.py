@@ -18,11 +18,35 @@ import logging
 from typing import Any
 
 import aiohttp
-from aiohttp import BasicAuth, ClientError, ClientResponseError, ClientTimeout
+from aiohttp import (
+    BasicAuth,
+    ClientConnectorError,
+    ClientError,
+    ClientResponseError,
+    ClientTimeout,
+    ServerDisconnectedError,
+)
 
 from .const import HTTP_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def net_error_text(err: BaseException) -> str:
+    """A readable reason; aiohttp timeouts stringify to ''."""
+    if isinstance(err, TimeoutError):
+        return (
+            "нет ответа (таймаут): устройство выключено или firewall "
+            "не пропускает Home Assistant"
+        )
+    if isinstance(err, ClientConnectorError):
+        os_err = getattr(err, "os_error", None)
+        reason = getattr(os_err, "strerror", None) or str(os_err or err)
+        return f"не удалось подключиться: {reason}"
+    if isinstance(err, ServerDisconnectedError):
+        return "устройство закрыло соединение"
+    text = str(err).strip()
+    return text or type(err).__name__
 
 
 class MikrotikError(Exception):
@@ -99,7 +123,7 @@ class MikrotikClient:
                 f"{method} {path} failed: {err.status} {err.message}"
             ) from err
         except (ClientError, TimeoutError, OSError) as err:
-            raise MikrotikError(f"{method} {path} failed: {err}") from err
+            raise MikrotikError(f"{method} {path}: {net_error_text(err)}") from err
 
     async def _list(self, path: str, *, optional: bool = False) -> list[dict]:
         """GET a table. Optional tables (package not installed) yield []."""
