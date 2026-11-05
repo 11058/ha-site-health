@@ -319,6 +319,38 @@ async def ws_set_name(hass: HomeAssistant, connection, msg: dict) -> None:
     connection.send_result(msg["id"], result)
 
 
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/probe_remove",
+        vol.Required("entry_id"): str,
+        vol.Required("host"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_probe_remove(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Delete the core router's netwatch check of a device that is gone."""
+    from . import loaded_runtimes
+    from .mikrotik import MikrotikError
+
+    runtime = next(
+        (r for e, r in loaded_runtimes(hass) if e.entry_id == msg["entry_id"]), None
+    )
+    if runtime is None:
+        connection.send_error(msg["id"], "not_found", "site not loaded")
+        return
+    client = runtime.site.client
+    try:
+        rows = [r for r in await client.netwatch() if r.get("host") == msg["host"]]
+        for row in rows:
+            await client._request("DELETE", f"tool/netwatch/{row['.id']}")
+    except MikrotikError as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    await runtime.site.async_request_refresh()
+    connection.send_result(msg["id"], {"removed": len(rows)})
+
+
 @callback
 def async_register_websocket(hass: HomeAssistant) -> None:
     for handler in (
@@ -332,5 +364,6 @@ def async_register_websocket(hass: HomeAssistant) -> None:
         ws_switch_port,
         ws_modem_balance,
         ws_set_name,
+        ws_probe_remove,
     ):
         websocket_api.async_register_command(hass, handler)

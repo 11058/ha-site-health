@@ -456,7 +456,10 @@ class SiteHealthPanel extends HTMLElement {
           <td class="num sub">${d.online ? `up ${dur(sys.uptime_s)}` : esc(d.error || "нет связи")}</td>
         </tr>${d.lte && Object.keys(d.lte).length ? `<tr><td colspan="4">${this._lteLine(Object.values(d.lte)[0])}</td></tr>` : ""}`;
     };
-    const caps = (s.caps || []).map((c) => `
+    // A CAP that is also added as a MikroTik device is one box: one row.
+    const capOf = (d) => (s.caps || []).find((c) => c.identity === d.name
+      || (d.interfaces || []).some((i) => i.mac && i.mac === c["base-mac"]));
+    const caps = (s.caps || []).filter((c) => !s.devices.some((d) => capOf(d) === c)).map((c) => `
         <tr>
           <td>${dot(String(c.state || "").toLowerCase().startsWith("run") || c.state === undefined ? true : null)} <b>${esc(c.identity || c.name || "")}</b>
             <div class="sub">точка доступа (CAP) · ${esc(String(c.address || "").split("/")[0])}</div></td>
@@ -473,14 +476,19 @@ class SiteHealthPanel extends HTMLElement {
           <td>${dot(p.up)} <b>${esc(p.name)}</b><div class="sub">${
             switchNets.some((n) => inNet(p.host, n)) ? "коммутатор" : "устройство"} · ${esc(p.host)}</div></td>
           <td class="sub" colspan="2">по проверке netwatch на роутере</td>
-          <td class="num sub">${p.up ? "на связи" : p.up === false ? "не отвечает" : "—"}</td>
+          <td class="num sub">${p.up ? "на связи" : p.up === false ? "не отвечает" : "—"}${
+            this._admin && !p.up ? (this._confirm && this._confirm.probe === p.host
+              ? `<br><span class="sub">Убрать проверку с роутера?</span>
+                 <button class="act primary" data-do="probe-rm" data-host="${esc(p.host)}" data-entry="${esc(s.entry_id)}">Да</button>
+                 <button class="act" data-do="cancel">Нет</button>`
+              : `<br><button class="act" data-do="probe-ask" data-host="${esc(p.host)}" title="Устройства больше нет: удалить его netwatch на роутере">Убрать</button>`) : ""}</td>
         </tr>`).join("");
     return `
       <section class="card">
         <h2>Устройства</h2>
         <table>
           ${row(s.core, "главный роутер")}
-          ${s.devices.map((d) => row(d, "MikroTik")).join("")}
+          ${s.devices.map((d) => row(d, capOf(d) ? "MikroTik · точка доступа CAP" : "MikroTik")).join("")}
           ${caps}
           ${extra}
         </table>
@@ -700,6 +708,11 @@ class SiteHealthPanel extends HTMLElement {
         case "ask": this._confirm = { mac: d.mac, place: d.place }; break;
         case "ask-sim": this._confirm = { modem: d.modem, slot: Number(d.slot) }; break;
         case "cancel": this._confirm = null; break;
+        case "probe-ask": this._confirm = { probe: d.host }; break;
+        case "probe-rm":
+          this._confirm = null;
+          this._call({ type: "site_health/probe_remove", entry_id: d.entry, host: d.host }, `probe:${d.host}`);
+          return;
         case "place":
           this._confirm = null;
           this._call({ type: "site_health/set_segment", mac: d.mac, segment: d.place,
