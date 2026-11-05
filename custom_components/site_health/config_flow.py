@@ -20,6 +20,7 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_ADMIN_VLAN,
     CONF_AUTO_CONFIGURE,
+    CONF_ENDPOINT,
     CONF_FAMILY_VLAN,
     CONF_HA_IP,
     CONF_HOST,
@@ -38,12 +39,13 @@ from .const import (
     DEFAULT_WG_STALE,
     DOMAIN,
     SUBENTRY_DEVICE,
+    SUBENTRY_GATEWAY,
     SUBENTRY_MODEM,
     SUBENTRY_SWITCH,
 )
 from .mikrotik import MikrotikAuthError, MikrotikError
 from .parsers import mikrotik_candidates
-from .provision import USERNAME, new_password, onboarding_script
+from .provision import USERNAME, gateway_user, new_password, onboarding_script
 
 MANUAL = "__manual__"
 METHOD = "method"
@@ -165,6 +167,7 @@ class SiteHealthConfigFlow(ConfigFlow, domain=DOMAIN):
             SUBENTRY_DEVICE: DeviceSubentryFlow,
             SUBENTRY_MODEM: ModemSubentryFlow,
             SUBENTRY_SWITCH: SwitchSubentryFlow,
+            SUBENTRY_GATEWAY: GatewaySubentryFlow,
         }
 
     def __init__(self) -> None:
@@ -710,4 +713,134 @@ class SwitchSubentryFlow(ConfigSubentryFlow):
             data_schema=schema,
             errors=errors,
             description_placeholders={"name": sub.title},
+        )
+
+
+class GatewaySubentryFlow(ConfigSubentryFlow):
+    """Another MikroTik with a public address that admins can dial in to.
+
+    A hub whose tunnel reaches this site: the admin VPN can then be made there
+    when the site itself sits behind NAT. HA gets its own user on it (one per
+    site, so a hub shared by several sites keeps every HA's login apart) with
+    write rights: it adds and removes WireGuard peers.
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[str, Any] = {}
+        self._title = ""
+        self._method = METHOD_SCRIPT
+
+    def _schema_user(self, d: Mapping[str, Any]) -> vol.Schema:
+        return vol.Schema(
+            {
+                vol.Required(CONF_HOST, default=d.get(CONF_HOST, "")): str,
+                vol.Required("name", default=d.get("name", "")): str,
+                vol.Optional(CONF_ENDPOINT, default=d.get(CONF_ENDPOINT, "")): str,
+                vol.Required(METHOD, default=METHOD_SCRIPT): _method_selector(),
+            }
+        )
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        if user_input is not None:
+            host = user_input[CONF_HOST].strip()
+            self._title = user_input["name"].strip() or host
+            self._method = user_input[METHOD]
+            ha_ip = await _ha_ip(self.hass, host)
+            self._data = _generated(host, ha_ip)
+            self._data[CONF_USERNAME] = gateway_user(self._get_entry().title)
+            self._data[CONF_ENDPOINT] = user_input.get(CONF_ENDPOINT, "").strip()
+            known = {
+                _addr(s.data)
+                for s in self._get_entry().subentries.values()
+                if s.subentry_type == SUBENTRY_GATEWAY
+            }
+            if _addr(self._data) in known:
+                return self.async_abort(reason="already_configured")
+            if self._method == METHOD_SCRIPT:
+                return await self.async_step_onboard()
+            return await self.async_step_credentials()
+        return self.async_show_form(step_id="user", data_schema=self._schema_user({}))
+
+    async def _finish(self) -> SubentryFlowResult | str:
+        err, _ident = await _probe(self.hass, self._data)
+        if err:
+            return err
+        return self.async_create_entry(
+            title=self._title, data=self._data, unique_id=f"gw:{_addr(self._data)}"
+        )
+
+    async def async_step_onboard(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            result = await self._finish()
+            if not isinstance(result, str):
+                return result
+            errors["base"] = result
+        user = self._data[CONF_USERNAME]
+        return self.async_show_form(
+            step_id="onboard",
+            data_schema=vol.Schema({}),
+            errors=errors,
+            description_placeholders={
+                "host": self._data[CONF_HOST],
+                "name": self._title,
+                "user": user,
+                "script": onboarding_script(
+                    ha_ip=self._data[CONF_HA_IP] or "HA_IP",
+                    password=self._data[CONF_PASSWORD],
+                    core=True,
+                    username=user,
+                    group="ha-vpn",
+                    rule=f"HA REST {self._data[CONF_HA_IP]}",
+                ),
+            },
+        )
+
+    async def async_step_credentials(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            self._data.update(user_input)
+            result = await self._finish()
+            if not isinstance(result, str):
+                return result
+            errors["base"] = result
+        return self.async_show_form(
+            step_id="credentials",
+            data_schema=vol.Schema(
+                _conn_schema(user_input or self._data, with_host=False)
+            ),
+            errors=errors,
+            description_placeholders={
+                "host": self._data[CONF_HOST],
+                "name": self._title,
+            },
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        sub = self._get_reconfigure_subentry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            data = {**sub.data, **user_input}
+            data[CONF_ENDPOINT] = data.get(CONF_ENDPOINT, "").strip()
+            err, _ident = await _probe(self.hass, data)
+            if not err:
+                return self.async_update_and_abort(self._get_entry(), sub, data=data)
+            errors["base"] = err
+        schema = _conn_schema(sub.data)
+        schema[vol.Optional(CONF_ENDPOINT, default=sub.data.get(CONF_ENDPOINT, ""))] = (
+            str
+        )
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(schema),
+            errors=errors,
+            description_placeholders={"host": sub.data.get(CONF_HOST, "")},
         )

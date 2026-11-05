@@ -947,7 +947,13 @@ class SiteHealthPanel extends HTMLElement {
     v.loading = true; this._renderVpn();
     try {
       v.state = await this._hass.callWS({ type: "site_health/vpn_state", entry_id: v.entry });
-      if (v.endpoint === null) v.endpoint = v.state.endpoint || "";
+      const opts = v.state.options || [];
+      if (v.gw === undefined || !opts.some((o) => o.id === v.gw)) {
+        v.gw = v.state.suggested || "";
+        v.endpoint = null;
+      }
+      const cur = opts.find((o) => o.id === v.gw) || {};
+      if (v.endpoint === null) v.endpoint = cur.endpoint || "";
     } catch (e) { v.error = e.message || String(e); }
     v.loading = false; this._renderVpn();
   }
@@ -957,7 +963,7 @@ class SiteHealthPanel extends HTMLElement {
     v.busy = true; v.error = ""; this._renderVpn();
     try {
       v.result = await this._hass.callWS({ type: "site_health/vpn_create", entry_id: v.entry,
-        name: v.name.trim(), endpoint: (v.endpoint || "").trim() });
+        gateway: v.gw || "", name: v.name.trim(), endpoint: (v.endpoint || "").trim() });
     } catch (e) { v.error = e.message || String(e); }
     v.busy = false;
     if (v.result) await this._vpnLoad(); else this._renderVpn();
@@ -967,7 +973,8 @@ class SiteHealthPanel extends HTMLElement {
     const v = this._vpn;
     v.busy = true; v.ask = null; v.error = ""; this._renderVpn();
     try {
-      await this._hass.callWS({ type: "site_health/vpn_remove", entry_id: v.entry, peer_id: id });
+      await this._hass.callWS({ type: "site_health/vpn_remove", entry_id: v.entry,
+        gateway: v.gw || "", peer_id: id });
     } catch (e) { v.error = e.message || String(e); }
     v.busy = false;
     await this._vpnLoad();
@@ -993,7 +1000,20 @@ class SiteHealthPanel extends HTMLElement {
     if (!host) return;
     const v = this._vpn;
     if (!v) { host.innerHTML = ""; return; }
-    const st = v.state || {};
+    const opts = (v.state && v.state.options) || [];
+    const st = opts.find((o) => o.id === v.gw) || {};
+    const label = (o) => o.direct ? `Напрямую — ${o.name}` : `Через шлюз ${o.name}`;
+    const choose = opts.length > 1 || (opts[0] && !opts[0].available) ? `
+      <h3>Куда подключаться</h3>
+      <div class="gwopts">${opts.map((o) => `
+        <label class="gwopt ${o.id === v.gw ? "on" : ""} ${o.available ? "" : "off"}">
+          <input type="radio" name="vgw" value="${esc(o.id)}" ${o.id === v.gw ? "checked" : ""} ${o.available ? "" : "disabled"}>
+          <span><b>${esc(label(o))}</b>
+            <span class="sub">${!o.available ? esc(o.reason || "недоступен")
+              : o.endpoint ? `снаружи: ${esc(o.endpoint)}:${esc(o.port)}`
+              : "нет внешнего адреса"}</span></span>
+        </label>`).join("")}</div>
+      ${opts.length === 1 ? `<p class="sub">Объект за NAT? Добавьте VPN-шлюз: «Настройки → Устройства и службы → Site Health → Добавить VPN-шлюз».</p>` : ""}` : "";
     let body = "";
     if (v.result) {
       const r = v.result;
@@ -1011,8 +1031,8 @@ class SiteHealthPanel extends HTMLElement {
         </div>`;
     } else if (v.loading && !v.state) {
       body = `<p>Читаю роутер… <span class="spin"></span></p>`;
-    } else if (st.available === false) {
-      body = `<p class="warn">${esc(st.reason || "недоступно")}</p>`;
+    } else if (v.state && !opts.some((o) => o.available)) {
+      body = `${choose}<p class="warn">Создать подключение негде: ${esc(st.reason || "нет доступного роутера")}.</p>`;
     } else if (v.state) {
       const peers = (st.peers || []).map((p) => {
         const asking = v.ask === p.id;
@@ -1024,8 +1044,8 @@ class SiteHealthPanel extends HTMLElement {
             : '<span class="sub">создан вручную</span>'}</td></tr>`;
       }).join("");
       const noEp = !(v.endpoint || "").trim();
-      body = `
-        <p class="sub">Интерфейс ${esc(st.interface)}, порт UDP ${esc(st.port)}, сеть ${esc(st.admin_net)};
+      body = `${choose}
+        <p class="sub">${esc(label(st))}: интерфейс ${esc(st.interface)}, порт UDP ${esc(st.port)}, сеть ${esc(st.admin_net)};
           клиенту откроется ${esc(st.allowed_ips)}.</p>
         ${st.input_open === false ? `<p class="warn">Правило firewall, пускающее порт ${esc(st.port)} снаружи, на роутере выключено —
           подключиться из интернета не получится, пока его не включат.</p>` : ""}
@@ -1065,6 +1085,12 @@ class SiteHealthPanel extends HTMLElement {
     }));
     const nm = host.querySelector("#vname");
     if (nm) nm.addEventListener("input", () => { v.name = nm.value; });
+    host.querySelectorAll('input[name="vgw"]').forEach((r) => r.addEventListener("change", () => {
+      v.gw = r.value; v.ask = null;
+      const o = opts.find((x) => x.id === v.gw) || {};
+      v.endpoint = o.endpoint || "";
+      this._renderVpn();
+    }));
     const ep = host.querySelector("#vep");
     if (ep) ep.addEventListener("input", () => { v.endpoint = ep.value; });
   }
@@ -1147,6 +1173,12 @@ const STYLE = `
   .portinfo select { margin-left: 6px; padding: 3px 6px; border-radius: 6px; background: var(--card-background-color);
     color: var(--primary-text-color); border: 1px solid var(--divider-color); }
   .sw { margin-bottom: 16px; }
+  .gwopts { display:flex; flex-direction:column; gap:6px; }
+  .gwopt { display:flex; gap:8px; align-items:flex-start; padding:8px 10px; border:1px solid var(--divider-color);
+    border-radius:10px; cursor:pointer; font-size:14px; }
+  .gwopt.on { border-color: var(--primary-color); }
+  .gwopt.off { opacity:.55; cursor:default; }
+  .gwopt .sub { display:block; }
   .qr { display:flex; justify-content:center; margin: 8px 0; }
   .qr svg { width: min(320px, 80vw); height: auto; background:#fff; padding: 6px; border-radius: 8px; }
   .act.danger { border-color: var(--error-color, #c62828); color: var(--error-color, #c62828); }

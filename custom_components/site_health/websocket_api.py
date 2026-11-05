@@ -354,11 +354,12 @@ async def ws_probe_remove(hass: HomeAssistant, connection, msg: dict) -> None:
 def _vpn_site(hass: HomeAssistant, entry_id: str):
     from . import loaded_runtimes
 
-    runtime = next(
-        (r for e, r in loaded_runtimes(hass) if e.entry_id == entry_id), None
+    found = next(
+        ((e, r) for e, r in loaded_runtimes(hass) if e.entry_id == entry_id), None
     )
-    if runtime is None or runtime.site.site is None:
+    if found is None or found[1].site.site is None:
         raise HomeAssistantError("объект не загружен")
+    entry, runtime = found
     coord = runtime.site
     site = coord.site
     admin = next(
@@ -367,7 +368,23 @@ def _vpn_site(hass: HomeAssistant, entry_id: str):
     )
     nets = [g.network for g in site.segments.values()]
     uplinks = [w.address for w in site.wans.values() if getattr(w, "address", "")]
-    return coord, admin, nets, uplinks
+    return entry, coord, admin, nets, uplinks
+
+
+def _gateways(entry) -> dict[str, Any]:
+    from .const import SUBENTRY_GATEWAY
+
+    return {
+        sid: sub
+        for sid, sub in entry.subentries.items()
+        if sub.subentry_type == SUBENTRY_GATEWAY
+    }
+
+
+def _gateway_client(hass: HomeAssistant, sub):
+    from . import make_client
+
+    return make_client(hass, dict(sub.data))
 
 
 @websocket_api.require_admin
@@ -376,24 +393,48 @@ def _vpn_site(hass: HomeAssistant, entry_id: str):
 )
 @websocket_api.async_response
 async def ws_vpn_state(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Every place an admin VPN can be made: the site itself and its gateways."""
     from . import admin_vpn
+    from .const import CONF_ENDPOINT
     from .mikrotik import MikrotikError
 
     try:
-        coord, admin, nets, uplinks = _vpn_site(hass, msg["entry_id"])
-        if not admin:
-            connection.send_result(
-                msg["id"],
-                {"available": False,
-                 "reason": f"не найдена админская сеть VLAN {coord.admin_vlan}"},
-            )  # fmt: skip
-            return
-        state = await admin_vpn.async_state(coord.client, admin, uplinks)
-        state["allowed_ips"] = admin_vpn.site_allowed_ips(nets, admin)
-    except (HomeAssistantError, MikrotikError) as err:
+        entry, coord, admin, nets, uplinks = _vpn_site(hass, msg["entry_id"])
+    except HomeAssistantError as err:
         connection.send_error(msg["id"], "failed", str(err))
         return
-    connection.send_result(msg["id"], state)
+    allowed = admin_vpn.site_allowed_ips(nets, admin) if admin else ""
+    options = []
+    direct: dict[str, Any] = {"id": "", "name": coord.device_name, "direct": True}
+    if not admin:
+        reason = f"не найдена админская сеть VLAN {coord.admin_vlan}"
+        direct |= {"available": False, "reason": reason}
+    else:
+        try:
+            direct |= await admin_vpn.async_state(coord.client, admin, uplinks)
+        except MikrotikError as err:
+            direct |= {"available": False, "reason": str(err)}
+    options.append(direct)
+    for sid, sub in _gateways(entry).items():
+        gw: dict[str, Any] = {"id": sid, "name": sub.title, "direct": False}
+        try:
+            gw |= await admin_vpn.async_state(
+                _gateway_client(hass, sub),
+                None,
+                site=entry.title,
+                endpoint=sub.data.get(CONF_ENDPOINT, ""),
+            )
+        except MikrotikError as err:
+            gw |= {"available": False, "reason": str(err)}
+        options.append(gw)
+    for o in options:
+        o["allowed_ips"] = allowed
+    # Prefer a place clients can actually reach from the internet.
+    best = next(
+        (o["id"] for o in options if o.get("available") and o.get("endpoint")),
+        next((o["id"] for o in options if o.get("available")), ""),
+    )
+    connection.send_result(msg["id"], {"options": options, "suggested": best})
 
 
 @websocket_api.require_admin
@@ -401,6 +442,7 @@ async def ws_vpn_state(hass: HomeAssistant, connection, msg: dict) -> None:
     {
         vol.Required("type"): f"{DOMAIN}/vpn_create",
         vol.Required("entry_id"): str,
+        vol.Optional("gateway", default=""): str,
         vol.Optional("name", default=""): vol.All(str, vol.Length(max=60)),
         vol.Optional("endpoint", default=""): vol.All(
             str, vol.Match(r"^[A-Za-z0-9.:\-]*$")
@@ -414,15 +456,24 @@ async def ws_vpn_create(hass: HomeAssistant, connection, msg: dict) -> None:
     from .mikrotik import MikrotikError
 
     try:
-        coord, admin, nets, _uplinks = _vpn_site(hass, msg["entry_id"])
+        entry, coord, admin, nets, _uplinks = _vpn_site(hass, msg["entry_id"])
         if not admin:
             raise HomeAssistantError("не найдена админская сеть")
+        allowed = admin_vpn.site_allowed_ips(nets, admin)
+        if msg["gateway"]:
+            sub = _gateways(entry).get(msg["gateway"])
+            if sub is None:
+                raise HomeAssistantError("шлюз не найден")
+            client, net, site = _gateway_client(hass, sub), None, entry.title
+        else:
+            client, net, site = coord.client, admin, ""
         result = await admin_vpn.async_create(
-            coord.client,
+            client,
             name=msg["name"].strip(),
-            admin_net=admin,
+            admin_net=net,
             endpoint=msg["endpoint"].strip(),
-            allowed_ips=admin_vpn.site_allowed_ips(nets, admin),
+            allowed_ips=allowed,
+            site=site,
         )
     except (HomeAssistantError, MikrotikError, ValueError) as err:
         connection.send_error(msg["id"], "failed", str(err))
@@ -436,6 +487,7 @@ async def ws_vpn_create(hass: HomeAssistant, connection, msg: dict) -> None:
     {
         vol.Required("type"): f"{DOMAIN}/vpn_remove",
         vol.Required("entry_id"): str,
+        vol.Optional("gateway", default=""): str,
         vol.Required("peer_id"): str,
     }
 )
@@ -445,8 +497,16 @@ async def ws_vpn_remove(hass: HomeAssistant, connection, msg: dict) -> None:
     from .mikrotik import MikrotikError
 
     try:
-        coord, _admin, _nets, _uplinks = _vpn_site(hass, msg["entry_id"])
-        result = await admin_vpn.async_remove(coord.client, msg["peer_id"])
+        entry, coord, _admin, _nets, _uplinks = _vpn_site(hass, msg["entry_id"])
+        if msg["gateway"]:
+            sub = _gateways(entry).get(msg["gateway"])
+            if sub is None:
+                raise HomeAssistantError("шлюз не найден")
+            result = await admin_vpn.async_remove(
+                _gateway_client(hass, sub), msg["peer_id"], site=entry.title
+            )
+        else:
+            result = await admin_vpn.async_remove(coord.client, msg["peer_id"])
     except (HomeAssistantError, MikrotikError, ValueError) as err:
         connection.send_error(msg["id"], "failed", str(err))
         return

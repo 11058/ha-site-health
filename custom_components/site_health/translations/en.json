@@ -194,6 +194,61 @@
         "already_configured": "Already added",
         "reconfigure_successful": "Saved"
       }
+    },
+    "vpn_gateway": {
+      "entry_type": "VPN gateway",
+      "initiate_flow": {
+        "user": "Add VPN gateway"
+      },
+      "step": {
+        "user": {
+          "title": "Add VPN gateway",
+          "description": "Another MikroTik with a public address whose tunnel reaches this site (a hub). Admin VPN connections can then be created on it: useful when the site itself is behind NAT. Home Assistant gets its own user there with write rights (it adds and removes WireGuard peers).",
+          "data": {
+            "host": "Address reachable from Home Assistant (through the tunnel)",
+            "name": "Name shown in the panel",
+            "endpoint": "Public address for clients (empty = detect)",
+            "method": "How to connect"
+          }
+        },
+        "onboard": {
+          "title": "{name}: paste into the terminal",
+          "description": "Open a terminal on **{host}** and paste. Creates user `{user}` (group `ha-vpn`: read, write, REST) allowed only from Home Assistant's address, HTTPS for it and an input rule for that address. Other users, including another site's `ha-vpn-*`, are not touched.\n\n```\n{script}\n```"
+        },
+        "credentials": {
+          "title": "{name} {host}",
+          "description": "Login for this gateway (needs write rights).",
+          "data": {
+            "username": "Username",
+            "password": "Password",
+            "tls": "HTTPS (www-ssl)",
+            "port": "Port (0 = default)",
+            "verify_ssl": "Verify certificate"
+          }
+        },
+        "reconfigure": {
+          "title": "{host}",
+          "description": "New address, login or public address of this gateway.",
+          "data": {
+            "host": "Address",
+            "username": "Username",
+            "password": "Password",
+            "tls": "HTTPS (www-ssl)",
+            "port": "Port (0 = default)",
+            "verify_ssl": "Verify certificate",
+            "endpoint": "Public address for clients (empty = detect)"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Cannot reach the RouterOS REST API of the gateway. Was the block pasted completely? Does the tunnel let Home Assistant reach it?",
+        "invalid_auth": "Username or password rejected",
+        "not_routeros": "The device answered but does not look like RouterOS"
+      },
+      "abort": {
+        "already_configured": "This gateway is already added",
+        "reconfigure_successful": "Saved"
+      }
     }
   },
   "options": {

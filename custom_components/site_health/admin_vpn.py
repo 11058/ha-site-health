@@ -81,9 +81,11 @@ def ascii_name(name: str) -> str:
     return re.sub(r"\s+", " ", text).strip()[:40]
 
 
-def peer_name(name: str) -> str:
+def peer_name(name: str, ip: str = "") -> str:
+    """ASCII peer name, unique on the router thanks to the address's last byte."""
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_name(name).lower()).strip("-")
-    return f"adm-{slug or 'device'}"[:40]
+    tail = f"-{ip.rsplit('.', 1)[-1]}" if ip else ""
+    return f"adm-{(slug or 'device')[:30]}{tail}"
 
 
 def _networks(value: str) -> list[ipaddress.IPv4Network]:
@@ -291,25 +293,110 @@ def peer_view(row: Row, ours_tag: str = TAG) -> dict[str, Any]:
 # --- router side ----------------------------------------------------------
 
 
-async def async_state(
-    client, admin_net: str, uplink_addresses: list[str]
-) -> dict[str, Any]:
-    """What the panel shows before anything is created."""
+def derive_admin_net(addresses: Iterable[Row], peers: Iterable[Row]) -> str:
+    """The router's admin network when no VLAN number says so (a hub).
+
+    It is the address whose network holds the admin interface's peers; failing
+    that, an address on an interface named like the admin VLAN.
+    """
+    nets: list[tuple[ipaddress.IPv4Network, str]] = []
+    for a in addresses:
+        if as_bool(a.get("disabled")):
+            continue
+        try:
+            net = ipaddress.ip_interface(str(a.get("address", ""))).network
+        except ValueError:
+            continue
+        if net.version == 4 and net.prefixlen <= 29:
+            nets.append((net, str(a.get("interface", "")).lower()))
+    best, hits = "", 0
+    for net, _iface in nets:
+        n = sum(
+            1
+            for p in peers
+            for pn in _networks(p.get("allowed-address", ""))
+            if pn.prefixlen == 32 and pn.subnet_of(net)
+        )
+        if n > hits:
+            best, hits = str(net), n
+    if best:
+        return best
+    for net, iface in nets:
+        if "admin" in iface or "99" in iface:
+            return str(net)
+    return ""
+
+
+def _scope(site: str) -> str:
+    return f"{TAG} [{ascii_name(site)}]" if site else TAG
+
+
+def _mine(row: Row, site: str) -> bool:
+    return str(row.get("comment", "")).startswith(_scope(site))
+
+
+async def _read(client, admin_net: str | None):
     ifaces = await client._list("interface/wireguard", optional=True)
     peers = await client.wireguard_peers()
+    addresses = await client.addresses()
+    if not admin_net:
+        admin_peers = [
+            p
+            for p in peers
+            if any(
+                "admin" in str(i.get("name", "")).lower()
+                and i.get("name") == p.get("interface")
+                for i in ifaces
+            )
+        ]
+        admin_net = derive_admin_net(addresses, admin_peers)
     iface = find_admin_interface(ifaces, peers, admin_net) if admin_net else None
+    return ifaces, peers, addresses, admin_net, iface
+
+
+def _public_addresses(addresses: Iterable[Row]) -> list[str]:
+    return [
+        str(a.get("address", "")).split("/")[0]
+        for a in addresses
+        if not as_bool(a.get("disabled")) and _public(str(a.get("address", "")))
+    ]
+
+
+async def async_state(
+    client,
+    admin_net: str | None,
+    uplink_addresses: list[str] | None = None,
+    *,
+    site: str = "",
+    endpoint: str = "",
+) -> dict[str, Any]:
+    """What the panel shows before anything is created.
+
+    `site` is set when this router is a gateway serving another site: then only
+    the peers made for that site are listed, never the gateway's own ones.
+    """
+    _ifaces, peers, addresses, admin_net, iface = await _read(client, admin_net)
     if iface is None:
-        return {"available": False, "admin_net": admin_net,
+        return {"available": False, "admin_net": admin_net or "",
                 "reason": "на роутере нет админского WireGuard-интерфейса"}  # fmt: skip
     port = int(str(iface.get("listen-port", "0")) or 0)
-    cloud = {}
-    try:
-        cloud = await client._dict("ip/cloud")
-    except Exception:  # ip/cloud is optional on CHR/x86
+    why = "задан в настройках шлюза"
+    if not endpoint:
         cloud = {}
-    endpoint, why = guess_endpoint(cloud, uplink_addresses)
+        try:
+            cloud = await client._dict("ip/cloud")
+        except Exception:  # ip/cloud is optional on CHR/x86
+            cloud = {}
+        if uplink_addresses is None:
+            uplink_addresses = _public_addresses(addresses)
+        endpoint, why = guess_endpoint(cloud, uplink_addresses)
     rules = await client._list("ip/firewall/filter", optional=True)
     name = str(iface.get("name"))
+    shown = [
+        peer_view(p)
+        for p in peers
+        if p.get("interface") == name and (not site or _mine(p, site))
+    ]
     return {
         "available": True,
         "admin_net": admin_net,
@@ -318,7 +405,7 @@ async def async_state(
         "endpoint": endpoint,
         "endpoint_why": why,
         "input_open": input_open(rules, port),
-        "peers": [peer_view(p) for p in peers if p.get("interface") == name],
+        "peers": shown,
     }
 
 
@@ -326,17 +413,21 @@ async def async_create(
     client,
     *,
     name: str,
-    admin_net: str,
+    admin_net: str | None,
     endpoint: str,
     allowed_ips: str,
+    site: str = "",
 ) -> dict[str, Any]:
-    ifaces = await client._list("interface/wireguard", optional=True)
-    peers = await client.wireguard_peers()
-    iface = find_admin_interface(ifaces, peers, admin_net)
-    if iface is None:
+    """Add a peer for a fresh key pair; return the client config once.
+
+    With `site` the router is a gateway: the client gets an address in the
+    gateway's admin network, reaches the site through the gateway's tunnel and
+    also the gateway's own address for DNS.
+    """
+    _ifaces, peers, addresses, admin_net, iface = await _read(client, admin_net)
+    if iface is None or not admin_net:
         raise ValueError("на роутере нет админского WireGuard-интерфейса")
     leases = await client.leases()
-    addresses = await client.addresses()
     pools = await client._list("ip/pool", optional=True)
     ip = free_address(
         admin_net, peers=peers, leases=leases, addresses=addresses, pools=pools
@@ -354,16 +445,19 @@ async def async_create(
         ),
         "",
     )
+    if site and dns and dns not in allowed_ips:
+        allowed_ips = f"{allowed_ips}, {dns}/32"
     label = ascii_name(name) or ip
-    comment = f"{TAG} {label} ({ip})"
+    comment = f"{_scope(site)} {label} ({ip})"
     iface_name = str(iface["name"])
+    pname = peer_name(name or "device", ip)
     private, public = gen_keypair()
     peer = await client._request(
         "PUT",
         "interface/wireguard/peers",
         {
             "interface": iface_name,
-            "name": peer_name(name or ip),
+            "name": pname,
             "public-key": public,
             "allowed-address": f"{ip}/32",
             "comment": comment,
@@ -393,19 +487,19 @@ async def async_create(
     )
     return {
         "address": ip,
-        "peer": peer_name(name or ip),
+        "peer": pname,
         "config": config,
         "qr_svg": qr_svg(config),
-        "filename": f"{peer_name(name or ip)}.conf",
+        "filename": f"{pname}.conf",
     }
 
 
-async def async_remove(client, peer_id: str) -> dict[str, Any]:
+async def async_remove(client, peer_id: str, *, site: str = "") -> dict[str, Any]:
     peers = await client.wireguard_peers()
     row = next((p for p in peers if p.get(".id") == peer_id), None)
     if row is None:
         raise ValueError("такого подключения уже нет")
-    if not str(row.get("comment", "")).startswith(TAG):
+    if not _mine(row, site):
         raise ValueError(
             "это подключение создано не Site Health — удалите его на роутере"
         )

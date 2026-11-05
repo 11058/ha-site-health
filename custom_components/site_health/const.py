@@ -34,6 +34,8 @@ DEFAULT_WG_STALE = 180
 SUBENTRY_DEVICE = "device"
 SUBENTRY_MODEM = "modem"
 SUBENTRY_SWITCH = "switch"
+SUBENTRY_GATEWAY = "vpn_gateway"
+CONF_ENDPOINT = "endpoint"
 
 HTTP_TIMEOUT = 10
 

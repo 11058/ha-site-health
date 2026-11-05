@@ -122,7 +122,7 @@ def test_input_open():
 def test_names_are_ascii():
     assert vpn.ascii_name("Телефон Алексея") == "Telefon Alekseya"
     assert vpn.peer_name("Ноут Маши!") == "adm-nout-mashi"
-    assert vpn.peer_name("") == "adm-device"
+    assert vpn.peer_name("", "10.5.99.252") == "adm-device-252"
 
 
 def test_config_text():
@@ -190,7 +190,7 @@ def test_create_and_remove():
     assert priv not in str(c.calls)  # the private key never reaches the router
     assert c.calls[1][1] == "ip/route" and c.calls[1][2]["gateway"] == "wg-Admin"
     assert "DNS = 10.5.99.1" in res["config"] and "Endpoint" not in res["config"]
-    assert res["filename"] == "adm-telefon.conf"
+    assert res["filename"] == "adm-telefon-252.conf"
 
     out = asyncio.run(vpn.async_remove(c, "*9"))
     assert out == {"removed": True, "routes": 1}
@@ -200,3 +200,88 @@ def test_create_and_remove():
         assert "не Site Health" in str(err)
     else:
         raise AssertionError("must refuse foreign peers")
+
+
+HUB_IFACES = [
+    {
+        "name": "wg-admin",
+        "listen-port": "13234",
+        "public-key": "HUB=",
+        "disabled": "false",
+    }
+]
+HUB_PEERS = [
+    {
+        ".id": "*a",
+        "interface": "wg-admin",
+        "name": "phone",
+        "allowed-address": "10.0.99.251/32",
+    },
+    {
+        ".id": "*b",
+        "interface": "wg-admin",
+        "name": "x",
+        "allowed-address": "10.0.99.252/32",
+        "comment": vpn.TAG + " [Other] Phone (10.0.99.252)",
+    },
+]
+
+
+class HubClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.peers = [dict(p) for p in HUB_PEERS]
+
+    async def _list(self, path, optional=False):
+        if path == "interface/wireguard":
+            return HUB_IFACES
+        if path == "ip/firewall/filter":
+            return [
+                {
+                    "chain": "input",
+                    "action": "accept",
+                    "protocol": "udp",
+                    "dst-port": "13234",
+                }
+            ]
+        return []
+
+    async def addresses(self):
+        return [
+            {"address": "46.146.234.57/32", "interface": "ISP1"},
+            {"address": "10.0.99.1/24", "interface": "vlan99"},
+            {"address": "10.0.30.1/24", "interface": "vlan30"},
+        ]
+
+
+def test_derive_admin_net():
+    hub = asyncio.run(HubClient().addresses())
+    assert vpn.derive_admin_net(hub, HUB_PEERS) == "10.0.99.0/24"
+    assert vpn.derive_admin_net(hub, []) == "10.0.99.0/24"  # by interface name
+
+
+def test_gateway_state_create_remove_scoped_to_site():
+    c = HubClient()
+    st = asyncio.run(vpn.async_state(c, None, site="Beregovaya3"))
+    assert st["available"] and st["admin_net"] == "10.0.99.0/24"
+    assert st["endpoint"] == "46.146.234.57" and st["input_open"] is True
+    assert st["peers"] == []  # the hub's own and other sites' peers stay hidden
+    res = asyncio.run(
+        vpn.async_create(
+            c, name="Телефон", admin_net=None, endpoint="46.146.234.57",
+            allowed_ips="10.5.0.0/16", site="Beregovaya3",
+        )
+    )  # fmt: skip
+    assert res["address"] == "10.0.99.250"
+    assert "AllowedIPs = 10.5.0.0/16, 10.0.99.1/32" in res["config"]
+    assert "Endpoint = 46.146.234.57:13234" in res["config"]
+    assert c.calls[0][2]["comment"].startswith(vpn.TAG + " [Beregovaya3]")
+    st = asyncio.run(vpn.async_state(c, None, site="Beregovaya3"))
+    assert [p["address"] for p in st["peers"]] == ["10.0.99.250/32"]
+    try:
+        asyncio.run(vpn.async_remove(c, "*b", site="Beregovaya3"))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("another site's peer must not be removable")
+    assert asyncio.run(vpn.async_remove(c, "*9", site="Beregovaya3"))["removed"]

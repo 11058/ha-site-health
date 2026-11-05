@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import re
 import secrets
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -39,10 +40,25 @@ def new_password() -> str:
     return secrets.token_urlsafe(18)
 
 
-def onboarding_script(*, ha_ip: str, password: str, core: bool) -> str:
+def gateway_user(site: str) -> str:
+    """Own user per site on a shared VPN gateway: never touch another HA's."""
+    slug = re.sub(r"[^a-z0-9]+", "-", site.lower()).strip("-")
+    return f"ha-vpn-{slug or 'site'}"[:30]
+
+
+def onboarding_script(
+    *,
+    ha_ip: str,
+    password: str,
+    core: bool,
+    username: str = USERNAME,
+    group: str = GROUP,
+    rule: str = "HA REST",
+) -> str:
     """RouterOS commands that let HA in. Safe to paste twice."""
     ha = f"{ha_ip}/32"
     policy = POLICY_CORE if core else POLICY_DEVICE
+    USERNAME, GROUP = username, group
     lines = [
         f"# Site Health: access for Home Assistant {ha_ip}",
         # RouterOS 7.25 refuses to self-sign ("CA not found") unless the
@@ -60,7 +76,7 @@ def onboarding_script(*, ha_ip: str, password: str, core: bool) -> str:
     ]
     if core:
         lines.append(
-            f':if ([:len [/ip firewall filter find comment="{COMMENT_TAG}: HA REST"]] = 0) do={{ :local f [/ip firewall filter find chain=input]; :if ([:len $f] > 0) do={{ /ip firewall filter add chain=input action=accept protocol=tcp dst-port=443 src-address={ha_ip} comment="{COMMENT_TAG}: HA REST" place-before=[:pick $f 0] }} else={{ /ip firewall filter add chain=input action=accept protocol=tcp dst-port=443 src-address={ha_ip} comment="{COMMENT_TAG}: HA REST" }} }}'
+            f':if ([:len [/ip firewall filter find comment="{COMMENT_TAG}: {rule}"]] = 0) do={{ :local f [/ip firewall filter find chain=input]; :if ([:len $f] > 0) do={{ /ip firewall filter add chain=input action=accept protocol=tcp dst-port=443 src-address={ha_ip} comment="{COMMENT_TAG}: {rule}" place-before=[:pick $f 0] }} else={{ /ip firewall filter add chain=input action=accept protocol=tcp dst-port=443 src-address={ha_ip} comment="{COMMENT_TAG}: {rule}" }} }}'
         )
     return "\n".join(lines)
 
