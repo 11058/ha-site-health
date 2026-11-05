@@ -261,7 +261,8 @@ class SiteHealthPanel extends HTMLElement {
         <div class="title">Здоровье сети</div>
       </div>
       <div id="body" class="body"><div class="muted">Загрузка…</div></div>
-      <div id="modal"></div>`;
+      <div id="modal"></div>
+      <div id="vpn"></div>`;
     const menu = this.shadowRoot.querySelector("ha-menu-button");
     if (menu) { menu.hass = this._hass; menu.narrow = this._narrow; }
   }
@@ -303,6 +304,7 @@ class SiteHealthPanel extends HTMLElement {
         ${(s.modems || []).map((m) => this._modem(s, m)).join("")}
         ${this._devices(s)}
         ${this._radio(s)}
+        ${this._admin ? this._vpnCard(s) : ""}
       </div>
       ${(s.switches || []).map((w) => this._switch(s, w)).join("")}
       ${this._clients(s)}`;
@@ -767,6 +769,7 @@ class SiteHealthPanel extends HTMLElement {
           this._call({ type: "site_health/set_name", mac: d.mac, name: val, entry_id: d.entry }, d.mac);
           return;
         }
+        case "vpn": this._vpnOpen(d.entry); break;
         case "balance":
           this._call({ type: "site_health/modem_balance", modem: d.modem }, `bal${d.modem}`);
           return;
@@ -920,6 +923,152 @@ class SiteHealthPanel extends HTMLElement {
     if (nm) nm.addEventListener("input", () => { w.name = nm.value; });
   }
 
+  // --- admin VPN ------------------------------------------------------------
+  _vpnCard(s) {
+    const n = (s.tunnels || []).filter((t) => t.dial_in).length;
+    return `<section class="card">
+      <h2>Админский VPN (WireGuard)</h2>
+      <p class="sub">Новое подключение для админа: ключи создаются только по кнопке «Создать»,
+        конфиг и QR показываются один раз и нигде не хранятся.</p>
+      <div class="sub">Подключений на роутере: ${n}</div>
+      <div class="actions"><button class="act primary" data-do="vpn" data-entry="${esc(s.entry_id)}">Подключения VPN…</button></div>
+    </section>`;
+  }
+
+  async _vpnOpen(entry) {
+    this._vpn = { entry, state: null, loading: true, name: "", endpoint: null, result: null, error: "", ask: null };
+    this._renderVpn();
+    await this._vpnLoad();
+  }
+
+  async _vpnLoad() {
+    const v = this._vpn;
+    if (!v) return;
+    v.loading = true; this._renderVpn();
+    try {
+      v.state = await this._hass.callWS({ type: "site_health/vpn_state", entry_id: v.entry });
+      if (v.endpoint === null) v.endpoint = v.state.endpoint || "";
+    } catch (e) { v.error = e.message || String(e); }
+    v.loading = false; this._renderVpn();
+  }
+
+  async _vpnCreate() {
+    const v = this._vpn;
+    v.busy = true; v.error = ""; this._renderVpn();
+    try {
+      v.result = await this._hass.callWS({ type: "site_health/vpn_create", entry_id: v.entry,
+        name: v.name.trim(), endpoint: (v.endpoint || "").trim() });
+    } catch (e) { v.error = e.message || String(e); }
+    v.busy = false;
+    if (v.result) await this._vpnLoad(); else this._renderVpn();
+  }
+
+  async _vpnRemove(id) {
+    const v = this._vpn;
+    v.busy = true; v.ask = null; v.error = ""; this._renderVpn();
+    try {
+      await this._hass.callWS({ type: "site_health/vpn_remove", entry_id: v.entry, peer_id: id });
+    } catch (e) { v.error = e.message || String(e); }
+    v.busy = false;
+    await this._vpnLoad();
+  }
+
+  _vpnDownload() {
+    const r = this._vpn && this._vpn.result;
+    if (!r) return;
+    const url = URL.createObjectURL(new Blob([r.config], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = r.filename;
+    this.shadowRoot.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  _vpnClose() {
+    this._vpn = null;  // drop the private key from memory together with the dialog
+    this._renderVpn();
+  }
+
+  _renderVpn() {
+    const host = this.shadowRoot.getElementById("vpn");
+    if (!host) return;
+    const v = this._vpn;
+    if (!v) { host.innerHTML = ""; return; }
+    const st = v.state || {};
+    let body = "";
+    if (v.result) {
+      const r = v.result;
+      body = `
+        <p class="good">✓ Подключение создано: адрес ${esc(r.address)}, на роутере — ${esc(r.peer)}.</p>
+        <p><b>Сохраните конфиг сейчас.</b> Закрыли окно — показать его снова нельзя (приватный ключ не хранится);
+          тогда просто создайте новое подключение, а это удалите.</p>
+        <div class="qr">${r.qr_svg}</div>
+        <p class="sub">Телефон: приложение WireGuard → «+» → «Сканировать QR-код».
+          Компьютер: WireGuard → «Импорт туннеля из файла».</p>
+        <div class="actions">
+          <button class="act primary" data-v="dl">Скачать ${esc(r.filename)}</button>
+          <button class="act" data-v="copy">Скопировать текст</button>
+          <button class="act" data-v="more">Создать ещё</button>
+        </div>`;
+    } else if (v.loading && !v.state) {
+      body = `<p>Читаю роутер… <span class="spin"></span></p>`;
+    } else if (st.available === false) {
+      body = `<p class="warn">${esc(st.reason || "недоступно")}</p>`;
+    } else if (v.state) {
+      const peers = (st.peers || []).map((p) => {
+        const asking = v.ask === p.id;
+        return `<tr><td><b>${esc(p.name)}</b><div class="sub">${esc(p.comment.replace(/^site-health: admin VPN\s*/, ""))}</div></td>
+          <td class="sub">${esc(p.address)}<div>${p.last_handshake ? `связь ${esc(p.last_handshake)} назад` : "ещё не подключался"}</div></td>
+          <td class="num">${p.ours
+            ? (asking ? `<button class="act" data-v="no">Нет</button> <button class="act danger" data-v="rm" data-id="${esc(p.id)}">Удалить</button>`
+                      : `<button class="act" data-v="ask" data-id="${esc(p.id)}">Удалить…</button>`)
+            : '<span class="sub">создан вручную</span>'}</td></tr>`;
+      }).join("");
+      const noEp = !(v.endpoint || "").trim();
+      body = `
+        <p class="sub">Интерфейс ${esc(st.interface)}, порт UDP ${esc(st.port)}, сеть ${esc(st.admin_net)};
+          клиенту откроется ${esc(st.allowed_ips)}.</p>
+        ${st.input_open === false ? `<p class="warn">Правило firewall, пускающее порт ${esc(st.port)} снаружи, на роутере выключено —
+          подключиться из интернета не получится, пока его не включат.</p>` : ""}
+        ${st.input_open === null ? `<p class="warn">На роутере нет правила, пускающего UDP ${esc(st.port)} из интернета.</p>` : ""}
+        <table>${peers || '<tr><td class="muted">Подключений пока нет</td></tr>'}</table>
+        <h3>Новое подключение</h3>
+        <label class="nm-row">Кому (например: «Телефон Алексея»)
+          <input id="vname" value="${esc(v.name)}" maxlength="60" placeholder="Телефон Алексея"></label>
+        <label class="nm-row">Адрес объекта из интернета (IP или имя)
+          <input id="vep" value="${esc(v.endpoint || "")}" placeholder="vpn.example.ru"></label>
+        <p class="sub">${noEp
+          ? `<span class="warn">Не найдено: ${esc(st.endpoint_why || "")}.</span> Без адреса конфиг создастся, но строку Endpoint придётся вписать вручную.`
+          : `Подставлено: ${esc(st.endpoint_why || "введено вручную")}.`}</p>
+        <div class="actions"><button class="act primary" data-v="create" ${v.busy ? "disabled" : ""}>
+          ${v.busy ? '<span class="spin"></span>' : ""}Создать</button></div>`;
+    }
+    host.innerHTML = `<div class="overlay"><div class="dialog" role="dialog" aria-modal="true">
+      <div class="dlg-head">Админский VPN
+        <button class="x" data-v="close" aria-label="Закрыть">✕</button></div>
+      ${v.error ? `<div class="error">${esc(v.error)}</div>` : ""}
+      ${body}</div></div>`;
+    host.querySelectorAll("[data-v]").forEach((b) => b.addEventListener("click", () => {
+      const d = b.dataset.v;
+      if (d === "close") return this._vpnClose();
+      if (d === "create") return this._vpnCreate();
+      if (d === "dl") return this._vpnDownload();
+      if (d === "copy") {
+        navigator.clipboard && navigator.clipboard.writeText(v.result.config)
+          .then(() => { b.textContent = "Скопировано"; }, () => { b.textContent = "Не удалось"; });
+        return;
+      }
+      if (d === "more") { v.result = null; v.name = ""; }
+      if (d === "ask") v.ask = b.dataset.id;
+      if (d === "no") v.ask = null;
+      if (d === "rm") return this._vpnRemove(b.dataset.id);
+      this._renderVpn();
+    }));
+    const nm = host.querySelector("#vname");
+    if (nm) nm.addEventListener("input", () => { v.name = nm.value; });
+    const ep = host.querySelector("#vep");
+    if (ep) ep.addEventListener("input", () => { v.endpoint = ep.value; });
+  }
+
   _startWizPoll() {
     clearInterval(this._wizTimer);
     this._wizTimer = setInterval(() => {
@@ -998,6 +1147,9 @@ const STYLE = `
   .portinfo select { margin-left: 6px; padding: 3px 6px; border-radius: 6px; background: var(--card-background-color);
     color: var(--primary-text-color); border: 1px solid var(--divider-color); }
   .sw { margin-bottom: 16px; }
+  .qr { display:flex; justify-content:center; margin: 8px 0; }
+  .qr svg { width: min(320px, 80vw); height: auto; background:#fff; padding: 6px; border-radius: 8px; }
+  .act.danger { border-color: var(--error-color, #c62828); color: var(--error-color, #c62828); }
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display:flex; align-items:flex-start;
     justify-content:center; padding: 24px 12px; overflow-y:auto; z-index: 10; }
   .dialog { background: var(--card-background-color); color: var(--primary-text-color); border-radius: 16px;

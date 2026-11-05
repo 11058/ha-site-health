@@ -351,6 +351,109 @@ async def ws_probe_remove(hass: HomeAssistant, connection, msg: dict) -> None:
     connection.send_result(msg["id"], {"removed": len(rows)})
 
 
+def _vpn_site(hass: HomeAssistant, entry_id: str):
+    from . import loaded_runtimes
+
+    runtime = next(
+        (r for e, r in loaded_runtimes(hass) if e.entry_id == entry_id), None
+    )
+    if runtime is None or runtime.site.site is None:
+        raise HomeAssistantError("объект не загружен")
+    coord = runtime.site
+    site = coord.site
+    admin = next(
+        (g.network for g in site.segments.values() if g.vlan_id == coord.admin_vlan),
+        "",
+    )
+    nets = [g.network for g in site.segments.values()]
+    uplinks = [w.address for w in site.wans.values() if getattr(w, "address", "")]
+    return coord, admin, nets, uplinks
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/vpn_state", vol.Required("entry_id"): str}
+)
+@websocket_api.async_response
+async def ws_vpn_state(hass: HomeAssistant, connection, msg: dict) -> None:
+    from . import admin_vpn
+    from .mikrotik import MikrotikError
+
+    try:
+        coord, admin, nets, uplinks = _vpn_site(hass, msg["entry_id"])
+        if not admin:
+            connection.send_result(
+                msg["id"],
+                {"available": False,
+                 "reason": f"не найдена админская сеть VLAN {coord.admin_vlan}"},
+            )  # fmt: skip
+            return
+        state = await admin_vpn.async_state(coord.client, admin, uplinks)
+        state["allowed_ips"] = admin_vpn.site_allowed_ips(nets, admin)
+    except (HomeAssistantError, MikrotikError) as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    connection.send_result(msg["id"], state)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/vpn_create",
+        vol.Required("entry_id"): str,
+        vol.Optional("name", default=""): vol.All(str, vol.Length(max=60)),
+        vol.Optional("endpoint", default=""): vol.All(
+            str, vol.Match(r"^[A-Za-z0-9.:\-]*$")
+        ),
+    }
+)
+@websocket_api.async_response
+async def ws_vpn_create(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Make a key pair now, add the peer, hand the config back exactly once."""
+    from . import admin_vpn
+    from .mikrotik import MikrotikError
+
+    try:
+        coord, admin, nets, _uplinks = _vpn_site(hass, msg["entry_id"])
+        if not admin:
+            raise HomeAssistantError("не найдена админская сеть")
+        result = await admin_vpn.async_create(
+            coord.client,
+            name=msg["name"].strip(),
+            admin_net=admin,
+            endpoint=msg["endpoint"].strip(),
+            allowed_ips=admin_vpn.site_allowed_ips(nets, admin),
+        )
+    except (HomeAssistantError, MikrotikError, ValueError) as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    hass.async_create_task(coord.async_request_refresh())
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/vpn_remove",
+        vol.Required("entry_id"): str,
+        vol.Required("peer_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_vpn_remove(hass: HomeAssistant, connection, msg: dict) -> None:
+    from . import admin_vpn
+    from .mikrotik import MikrotikError
+
+    try:
+        coord, _admin, _nets, _uplinks = _vpn_site(hass, msg["entry_id"])
+        result = await admin_vpn.async_remove(coord.client, msg["peer_id"])
+    except (HomeAssistantError, MikrotikError, ValueError) as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    hass.async_create_task(coord.async_request_refresh())
+    connection.send_result(msg["id"], result)
+
+
 @callback
 def async_register_websocket(hass: HomeAssistant) -> None:
     for handler in (
@@ -365,5 +468,8 @@ def async_register_websocket(hass: HomeAssistant) -> None:
         ws_modem_balance,
         ws_set_name,
         ws_probe_remove,
+        ws_vpn_state,
+        ws_vpn_create,
+        ws_vpn_remove,
     ):
         websocket_api.async_register_command(hass, handler)
