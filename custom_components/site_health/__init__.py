@@ -55,6 +55,7 @@ from .const import (
     SERVICE_REMOVE_FAMILY,
     SERVICE_SET_SEGMENT,
     SUBENTRY_DEVICE,
+    SUBENTRY_GATEWAY,
     SUBENTRY_MODEM,
     SUBENTRY_SWITCH,
 )
@@ -92,6 +93,14 @@ class SiteRuntime:
     names_store: Any = None
     # Last provisioning pass on the core router: what is missing or broken.
     provision: dict[str, Any] = field(default_factory=dict)
+    # Admin VPN through hubs: wanted public keys and each hub's last report.
+    gateways: dict[str, Any] = field(default_factory=dict)
+    vpn_store: Any = None
+
+    def save_vpn(self) -> None:
+        self.vpn_store.async_delay_save(
+            lambda: {k: g.as_dict() for k, g in self.gateways.items()}, 2
+        )
 
     def all(self) -> list[DeviceCoordinator]:
         return [self.site, *self.devices.values()]
@@ -154,6 +163,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     from .websocket_api import async_register_websocket
 
     async_register_websocket(hass)
+    from .hub_view import HubView
+
+    hass.http.register_view(HubView())
     _register_services(hass)
     await async_register_panel(hass)
     return True
@@ -180,6 +192,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
         saved = {"names": saved, "written": {}}
     runtime.names = saved["names"]
     site.names = runtime.names
+    from .hub_vpn import GatewayState
+
+    runtime.vpn_store = Store(hass, 1, f"{DOMAIN}.vpn.{entry.entry_id}")
+    vpn_saved = await runtime.vpn_store.async_load() or {}
+    runtime.gateways = {
+        sid: GatewayState.from_dict(vpn_saved.get(sid, {}))
+        for sid, sub in entry.subentries.items()
+        if sub.subentry_type == SUBENTRY_GATEWAY
+    }
     site.names_written = saved["written"]
     site.save_names = lambda: runtime.names_store.async_delay_save(
         lambda: {"names": runtime.names, "written": site.names_written}, 5

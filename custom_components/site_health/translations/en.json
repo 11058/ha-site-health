@@ -203,47 +203,29 @@
       "step": {
         "user": {
           "title": "Add VPN gateway",
-          "description": "Another MikroTik with a public address whose tunnel reaches this site (a hub). Admin VPN connections can then be created on it: useful when the site itself is behind NAT. Home Assistant gets its own user there with write rights (it adds and removes WireGuard peers).",
+          "description": "A provider's hub (MikroTik with a public address whose tunnel reaches this site). Admins of this site connect to it and reach only this site's networks: {nets}. Home Assistant gets no login on the hub: the hub fetches this site's public keys from HA once a minute.",
           "data": {
-            "host": "Address reachable from Home Assistant (through the tunnel)",
             "name": "Name shown in the panel",
-            "endpoint": "Public address for clients (empty = detect)",
-            "method": "How to connect"
+            "endpoint": "Public address of the hub for clients (name or IP)",
+            "client_net": "Client network of this site on the hub (one /24 per site)",
+            "hub_ip": "Hub address as HA sees it (only it may fetch the list; empty = any)"
           }
         },
-        "onboard": {
-          "title": "{name}: paste into the terminal",
-          "description": "Open a terminal on **{host}** and paste. Creates user `{user}` (group `ha-vpn`: read, write, REST) allowed only from Home Assistant's address, HTTPS for it and an input rule for that address. Other users, including another site's `ha-vpn-*`, are not touched.\n\n```\n{script}\n```"
-        },
-        "credentials": {
-          "title": "{name} {host}",
-          "description": "Login for this gateway (needs write rights).",
-          "data": {
-            "username": "Username",
-            "password": "Password",
-            "tls": "HTTPS (www-ssl)",
-            "port": "Port (0 = default)",
-            "verify_ssl": "Verify certificate"
-          }
+        "script": {
+          "title": "{name}: paste into the hub's terminal",
+          "description": "Run this on the hub once. It creates the client WireGuard interface (if missing), firewall rules that let this site's clients reach only this site, and a script that syncs peers with Home Assistant every minute. Re-pasting is safe.\n\n```\n{script}\n```"
         },
         "reconfigure": {
-          "title": "{host}",
-          "description": "New address, login or public address of this gateway.",
+          "title": "VPN gateway",
+          "description": "Public address and hub address. The hub script (paste again after changing the hub address):\n\n```\n{script}\n```",
           "data": {
-            "host": "Address",
-            "username": "Username",
-            "password": "Password",
-            "tls": "HTTPS (www-ssl)",
-            "port": "Port (0 = default)",
-            "verify_ssl": "Verify certificate",
-            "endpoint": "Public address for clients (empty = detect)"
+            "endpoint": "Public address of the hub for clients",
+            "hub_ip": "Hub address as HA sees it"
           }
         }
       },
       "error": {
-        "cannot_connect": "Cannot reach the RouterOS REST API of the gateway. Was the block pasted completely? Does the tunnel let Home Assistant reach it?",
-        "invalid_auth": "Username or password rejected",
-        "not_routeros": "The device answered but does not look like RouterOS"
+        "bad_network": "Not a valid network (e.g. 10.250.5.0/24) or address"
       },
       "abort": {
         "already_configured": "This gateway is already added",

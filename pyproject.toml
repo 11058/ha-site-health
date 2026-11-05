@@ -11,3 +11,4 @@ ignore = ["RUF012", "RUF001", "RUF002", "RUF003"]
 [tool.ruff.lint.per-file-ignores]
 # RouterOS one-liners are pasted verbatim; splitting them hurts more than it helps.
 "custom_components/site_health/provision.py" = ["E501"]
+"custom_components/site_health/hub_vpn.py" = ["E501"]

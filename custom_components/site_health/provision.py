@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-import re
 import secrets
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -38,12 +37,6 @@ INTERNET_PROBES = [("8.8.8.8", "Internet 8.8.8.8"), ("1.1.1.1", "Internet 1.1.1.
 def new_password() -> str:
     # URL-safe alphabet: nothing RouterOS treats specially inside "...".
     return secrets.token_urlsafe(18)
-
-
-def gateway_user(site: str) -> str:
-    """Own user per site on a shared VPN gateway: never touch another HA's."""
-    slug = re.sub(r"[^a-z0-9]+", "-", site.lower()).strip("-")
-    return f"ha-vpn-{slug or 'site'}"[:30]
 
 
 def onboarding_script(

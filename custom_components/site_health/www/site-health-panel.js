@@ -1018,7 +1018,8 @@ class SiteHealthPanel extends HTMLElement {
     if (v.result) {
       const r = v.result;
       body = `
-        <p class="good">✓ Подключение создано: адрес ${esc(r.address)}, на роутере — ${esc(r.peer)}.</p>
+        <p class="good">✓ Подключение создано: адрес ${esc(r.address)}${r.pending ? "" : `, на роутере — ${esc(r.peer)}`}.</p>
+        ${r.pending ? `<p class="sub">${esc(r.pending)}.</p>` : ""}
         <p><b>Сохраните конфиг сейчас.</b> Закрыли окно — показать его снова нельзя (приватный ключ не хранится);
           тогда просто создайте новое подключение, а это удалите.</p>
         <div class="qr">${r.qr_svg}</div>
@@ -1036,8 +1037,9 @@ class SiteHealthPanel extends HTMLElement {
     } else if (v.state) {
       const peers = (st.peers || []).map((p) => {
         const asking = v.ask === p.id;
-        return `<tr><td><b>${esc(p.name)}</b><div class="sub">${esc(p.comment.replace(/^site-health: admin VPN\s*/, ""))}</div></td>
-          <td class="sub">${esc(p.address)}<div>${p.last_handshake ? `связь ${esc(p.last_handshake)} назад` : "ещё не подключался"}</div></td>
+        return `<tr><td><b>${esc(p.name)}</b><div class="sub">${esc((p.comment || "").replace(/^site-health: admin VPN\s*/, ""))}</div></td>
+          <td class="sub">${esc(p.address)}<div>${p.applied === false ? '<span class="warn">ждёт шлюза</span>'
+            : p.last_handshake ? `связь ${esc(p.last_handshake)} назад` : "ещё не подключался"}</div></td>
           <td class="num">${p.ours
             ? (asking ? `<button class="act" data-v="no">Нет</button> <button class="act danger" data-v="rm" data-id="${esc(p.id)}">Удалить</button>`
                       : `<button class="act" data-v="ask" data-id="${esc(p.id)}">Удалить…</button>`)
@@ -1047,6 +1049,7 @@ class SiteHealthPanel extends HTMLElement {
       body = `${choose}
         <p class="sub">${esc(label(st))}: интерфейс ${esc(st.interface)}, порт UDP ${esc(st.port)}, сеть ${esc(st.admin_net)};
           клиенту откроется ${esc(st.allowed_ips)}.</p>
+        ${st.warning ? `<p class="warn">${esc(st.warning)}</p>` : ""}
         ${st.input_open === false ? `<p class="warn">Правило firewall, пускающее порт ${esc(st.port)} снаружи, на роутере выключено —
           подключиться из интернета не получится, пока его не включат.</p>` : ""}
         ${st.input_open === null ? `<p class="warn">На роутере нет правила, пускающего UDP ${esc(st.port)} из интернета.</p>` : ""}

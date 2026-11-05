@@ -20,10 +20,12 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_ADMIN_VLAN,
     CONF_AUTO_CONFIGURE,
+    CONF_CLIENT_NET,
     CONF_ENDPOINT,
     CONF_FAMILY_VLAN,
     CONF_HA_IP,
     CONF_HOST,
+    CONF_HUB_IP,
     CONF_PASSWORD,
     CONF_PORT,
     CONF_SCAN_INTERVAL,
@@ -45,7 +47,7 @@ from .const import (
 )
 from .mikrotik import MikrotikAuthError, MikrotikError
 from .parsers import mikrotik_candidates
-from .provision import USERNAME, gateway_user, new_password, onboarding_script
+from .provision import USERNAME, new_password, onboarding_script
 
 MANUAL = "__manual__"
 METHOD = "method"
@@ -716,109 +718,119 @@ class SwitchSubentryFlow(ConfigSubentryFlow):
         )
 
 
-class GatewaySubentryFlow(ConfigSubentryFlow):
-    """Another MikroTik with a public address that admins can dial in to.
+def _site_nets(entry) -> list[str]:
+    """The site's own subnets, collapsed to its /16 when they all fit."""
+    import ipaddress
 
-    A hub whose tunnel reaches this site: the admin VPN can then be made there
-    when the site itself sits behind NAT. HA gets its own user on it (one per
-    site, so a hub shared by several sites keeps every HA's login apart) with
-    write rights: it adds and removes WireGuard peers.
+    from .admin_vpn import site_allowed_ips
+
+    runtime = getattr(entry, "runtime_data", None)
+    site = getattr(getattr(runtime, "site", None), "site", None)
+    nets = [g.network for g in site.segments.values()] if site else []
+    if not nets:
+        return []
+    text = site_allowed_ips(nets, nets[0])
+    return [str(ipaddress.ip_network(n.strip())) for n in text.split(",")]
+
+
+def _default_client_net(nets: list[str]) -> str:
+    """10.250.N.0/24 for a 10.N.x.x site, by the house numbering."""
+    if nets and nets[0].startswith("10."):
+        n = nets[0].split(".")[1]
+        if n.isdigit() and int(n) < 250:
+            return f"10.250.{int(n)}.0/24"
+    return "10.250.1.0/24"
+
+
+class GatewaySubentryFlow(ConfigSubentryFlow):
+    """A provider's hub that admins dial in to when the site has no public address.
+
+    HA gets no login on the hub. The hub runs a script that fetches this
+    site's wanted public keys from HA once a minute and keeps its peers in
+    line; its firewall lets this site's client network reach the site and
+    nothing else. See hub_vpn.py.
     """
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
         self._title = ""
-        self._method = METHOD_SCRIPT
-
-    def _schema_user(self, d: Mapping[str, Any]) -> vol.Schema:
-        return vol.Schema(
-            {
-                vol.Required(CONF_HOST, default=d.get(CONF_HOST, "")): str,
-                vol.Required("name", default=d.get("name", "")): str,
-                vol.Optional(CONF_ENDPOINT, default=d.get(CONF_ENDPOINT, "")): str,
-                vol.Required(METHOD, default=METHOD_SCRIPT): _method_selector(),
-            }
-        )
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
+        from .hub_vpn import new_token
+
+        entry = self._get_entry()
+        nets = _site_nets(entry)
+        errors: dict[str, str] = {}
         if user_input is not None:
-            host = user_input[CONF_HOST].strip()
-            self._title = user_input["name"].strip() or host
-            self._method = user_input[METHOD]
-            ha_ip = await _ha_ip(self.hass, host)
-            self._data = _generated(host, ha_ip)
-            self._data[CONF_USERNAME] = gateway_user(self._get_entry().title)
-            self._data[CONF_ENDPOINT] = user_input.get(CONF_ENDPOINT, "").strip()
-            known = {
-                _addr(s.data)
-                for s in self._get_entry().subentries.values()
-                if s.subentry_type == SUBENTRY_GATEWAY
+            import ipaddress
+
+            try:
+                net = ipaddress.ip_network(user_input[CONF_CLIENT_NET], strict=True)
+                if user_input.get(CONF_HUB_IP):
+                    ipaddress.ip_address(user_input[CONF_HUB_IP])
+            except ValueError:
+                errors["base"] = "bad_network"
+            else:
+                self._title = user_input["name"].strip() or "VPN"
+                self._data = {
+                    CONF_ENDPOINT: user_input[CONF_ENDPOINT].strip(),
+                    CONF_CLIENT_NET: str(net),
+                    CONF_HUB_IP: user_input.get(CONF_HUB_IP, "").strip(),
+                    "site_nets": nets,
+                    "token": new_token(),
+                }
+                return await self.async_step_script()
+        d = user_input or {}
+        schema = vol.Schema(
+            {
+                vol.Required("name", default=d.get("name", "")): str,
+                vol.Required(CONF_ENDPOINT, default=d.get(CONF_ENDPOINT, "")): str,
+                vol.Required(
+                    CONF_CLIENT_NET,
+                    default=d.get(CONF_CLIENT_NET, _default_client_net(nets)),
+                ): str,
+                vol.Optional(CONF_HUB_IP, default=d.get(CONF_HUB_IP, "")): str,
             }
-            if _addr(self._data) in known:
-                return self.async_abort(reason="already_configured")
-            if self._method == METHOD_SCRIPT:
-                return await self.async_step_onboard()
-            return await self.async_step_credentials()
-        return self.async_show_form(step_id="user", data_schema=self._schema_user({}))
-
-    async def _finish(self) -> SubentryFlowResult | str:
-        err, _ident = await _probe(self.hass, self._data)
-        if err:
-            return err
-        return self.async_create_entry(
-            title=self._title, data=self._data, unique_id=f"gw:{_addr(self._data)}"
+        )
+        return self.async_show_form(
+            step_id="user",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"nets": ", ".join(nets) or "?"},
         )
 
-    async def async_step_onboard(
+    def _script(self, data: Mapping[str, Any]) -> str:
+        from .hub_vpn import hub_script
+
+        entry = self._get_entry()
+        ha_ip = entry.data.get(CONF_HA_IP) or "HA_IP"
+        port = getattr(getattr(self.hass, "http", None), "server_port", None) or 8123
+        return hub_script(
+            site=entry.title,
+            ha_url=f"http://{ha_ip}:{port}",
+            token=data["token"],
+            client_net=data[CONF_CLIENT_NET],
+            site_nets=list(data.get("site_nets") or []),
+            src_address=data.get(CONF_HUB_IP, ""),
+        )
+
+    async def async_step_script(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
-        errors: dict[str, str] = {}
         if user_input is not None:
-            result = await self._finish()
-            if not isinstance(result, str):
-                return result
-            errors["base"] = result
-        user = self._data[CONF_USERNAME]
+            return self.async_create_entry(
+                title=self._title,
+                data=self._data,
+                unique_id=f"gw:{self._data[CONF_CLIENT_NET]}",
+            )
         return self.async_show_form(
-            step_id="onboard",
+            step_id="script",
             data_schema=vol.Schema({}),
-            errors=errors,
             description_placeholders={
-                "host": self._data[CONF_HOST],
                 "name": self._title,
-                "user": user,
-                "script": onboarding_script(
-                    ha_ip=self._data[CONF_HA_IP] or "HA_IP",
-                    password=self._data[CONF_PASSWORD],
-                    core=True,
-                    username=user,
-                    group="ha-vpn",
-                    rule=f"HA REST {self._data[CONF_HA_IP]}",
-                ),
-            },
-        )
-
-    async def async_step_credentials(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            self._data.update(user_input)
-            result = await self._finish()
-            if not isinstance(result, str):
-                return result
-            errors["base"] = result
-        return self.async_show_form(
-            step_id="credentials",
-            data_schema=vol.Schema(
-                _conn_schema(user_input or self._data, with_host=False)
-            ),
-            errors=errors,
-            description_placeholders={
-                "host": self._data[CONF_HOST],
-                "name": self._title,
+                "script": self._script(self._data),
             },
         )
 
@@ -826,21 +838,19 @@ class GatewaySubentryFlow(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         sub = self._get_reconfigure_subentry()
-        errors: dict[str, str] = {}
         if user_input is not None:
-            data = {**sub.data, **user_input}
-            data[CONF_ENDPOINT] = data.get(CONF_ENDPOINT, "").strip()
-            err, _ident = await _probe(self.hass, data)
-            if not err:
-                return self.async_update_and_abort(self._get_entry(), sub, data=data)
-            errors["base"] = err
-        schema = _conn_schema(sub.data)
-        schema[vol.Optional(CONF_ENDPOINT, default=sub.data.get(CONF_ENDPOINT, ""))] = (
-            str
+            data = {**sub.data, **{k: v.strip() for k, v in user_input.items()}}
+            return self.async_update_and_abort(self._get_entry(), sub, data=data)
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_ENDPOINT, default=sub.data.get(CONF_ENDPOINT, "")
+                ): str,
+                vol.Optional(CONF_HUB_IP, default=sub.data.get(CONF_HUB_IP, "")): str,
+            }
         )
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema(schema),
-            errors=errors,
-            description_placeholders={"host": sub.data.get(CONF_HOST, "")},
+            data_schema=schema,
+            description_placeholders={"script": self._script(sub.data)},
         )

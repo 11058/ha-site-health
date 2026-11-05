@@ -36,6 +36,8 @@ SUBENTRY_MODEM = "modem"
 SUBENTRY_SWITCH = "switch"
 SUBENTRY_GATEWAY = "vpn_gateway"
 CONF_ENDPOINT = "endpoint"
+CONF_HUB_IP = "hub_ip"
+CONF_CLIENT_NET = "client_net"
 
 HTTP_TIMEOUT = 10
 
