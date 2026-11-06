@@ -306,7 +306,7 @@ class SiteHealthPanel extends HTMLElement {
         ${this._radio(s)}
         ${this._admin ? this._vpnCard(s) : ""}
       </div>
-      ${(s.switches || []).map((w) => this._switch(s, w)).join("")}
+      ${(s.switches || []).length ? `<div class="grid sws">${s.switches.map((w) => this._switch(s, w)).join("")}</div>` : ""}
       ${this._clients(s)}`;
   }
 
@@ -1117,6 +1117,7 @@ const STYLE = `
   h1 { font-size: 22px; font-weight: 500; margin: 8px 0 12px; }
   h2 { font-size: 16px; font-weight: 500; margin: 0 0 10px; }
   h3 { font-size: 13px; font-weight: 500; margin: 14px 0 6px; color: var(--secondary-text-color); }
+  .grid.sws { grid-template-columns: repeat(auto-fit, minmax(min(620px, 100%), 1fr)); align-items: start; }
   .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 16px; margin-bottom: 16px; }
   .card { background: var(--card-background-color); border-radius: var(--ha-card-border-radius, 12px);
     box-shadow: var(--ha-card-box-shadow, none); border: 1px solid var(--divider-color); padding: 16px; overflow-x:auto;
