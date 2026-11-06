@@ -1113,7 +1113,7 @@ const STYLE = `
   .toolbar { display:flex; align-items:center; height:56px; padding:0 12px; gap:8px;
     background: var(--app-header-background-color, var(--primary-color)); color: var(--app-header-text-color, #fff); }
   .title { font-size: 20px; }
-  .body { padding: 16px; max-width: 1400px; margin: 0 auto; box-sizing: border-box; }
+  .body { padding: clamp(8px, 1.2vw, 32px); margin: 0 auto; box-sizing: border-box; --z: 1; }
   h1 { font-size: 22px; font-weight: 500; margin: 8px 0 12px; }
   h2 { font-size: 16px; font-weight: 500; margin: 0 0 10px; }
   h3 { font-size: 13px; font-weight: 500; margin: 14px 0 6px; color: var(--secondary-text-color); }
@@ -1208,6 +1208,11 @@ const STYLE = `
   .spin { display:inline-block; width: 12px; height: 12px; border: 2px solid var(--divider-color);
     border-top-color: var(--primary-color); border-radius: 50%; animation: sp 1s linear infinite; vertical-align: middle; }
   @keyframes sp { to { transform: rotate(360deg); } }
+  /* Big screens: use the whole width and scale up, so a 4K monitor is not a
+     narrow strip of small text. The phone and laptop layout stays as it is. */
+  @media (min-width: 2000px) { .body, .dialog { zoom: 1.15; } .body { --z: 1.15; } }
+  @media (min-width: 2600px) { .body, .dialog { zoom: 1.3; } .body { --z: 1.3; } }
+  @media (min-width: 3400px) { .body, .dialog { zoom: 1.5; } .body { --z: 1.5; } }
   @media (max-width: 600px) {
     .body { padding: 8px; } td { padding: 5px 3px; } .card { padding: 12px; }
     .c-if, .c-sig { display: none; }
