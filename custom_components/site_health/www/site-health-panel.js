@@ -276,7 +276,9 @@ class SiteHealthPanel extends HTMLElement {
         : `<div class="muted">Нет настроенных объектов. Добавьте интеграцию Site Health.</div>`;
     } else {
       const focus = this.shadowRoot.activeElement && this.shadowRoot.activeElement.id;
-      if (focus === "nmedit") return;  // never re-render under the user's typing
+      // Never re-render under the user's typing or an open choice; and hold off
+      // while a port question is waiting for "Да" — a poll must not undo a click.
+      if (focus === "nmedit" || focus === "vlansel") { this._deferred = true; return; }
       body.innerHTML = (this._error ? `<div class="error">${esc(this._error)}</div>` : "")
         + this._sites.map((s) => this._site(s)).join("");
       this._bind(body);
@@ -534,7 +536,7 @@ class SiteHealthPanel extends HTMLElement {
           + (p.macs.length > 12 ? `<div class="sub">и ещё ${p.macs.length - 12}</div>` : "")
         : `<div class="sub">${p.up ? "MAC не видно (устройство молчит)" : "ничего не подключено"}</div>`;
       let ctl = "";
-      if (this._admin && w.online) {
+      if (this._admin && i.ports) {  // last data is enough: one failed poll must not hide the controls
         const busy = this._busy.has(`${w.subentry_id}:${sel}`);
         if (p.uplink) {
           ctl = `<div class="sub">Это аплинк к роутеру — менять его нельзя, коммутатор потеряет связь.</div>`;
@@ -548,9 +550,10 @@ class SiteHealthPanel extends HTMLElement {
             <button class="act" data-do="cancel">Нет</button>`;
         } else {
           const vlans = [1, ...(i.vlans || [])];
-          const opts = vlans.map((v) => `<option value="${v}" ${!p.trunk && p.vlan === v ? "selected" : ""}>VLAN ${v}${
+          const pick = this._port && this._port.pick !== undefined ? String(this._port.pick) : (p.trunk ? "trunk" : String(p.vlan));
+          const opts = vlans.map((v) => `<option value="${v}" ${pick === String(v) ? "selected" : ""}>VLAN ${v}${
             v === 1 ? " (по умолчанию)" : SEG_BY_VLAN[v] ? ` — ${SEG_BY_VLAN[v]}` : ""}</option>`).join("")
-            + `<option value="trunk" ${p.trunk ? "selected" : ""}>Транк (все VLAN с тегами)</option>`;
+            + `<option value="trunk" ${pick === "trunk" ? "selected" : ""}>Транк (все VLAN с тегами)</option>`;
           ctl = `<label class="sub">VLAN порта <select id="vlansel">${opts}</select></label>
             <button class="act" data-do="sw-vlan" ${busy ? "disabled" : ""}>Применить</button>
             ${p.poe_capable ? `<button class="act" data-do="sw-ask" data-action="restart" ${busy ? "disabled" : ""}>Перезапустить (PoE)</button>
@@ -562,6 +565,9 @@ class SiteHealthPanel extends HTMLElement {
           p.uplink ? " · аплинк" : ""}${p.poe_capable ? ` · PoE ${p.poe_enabled ? "вкл" : "выкл"}${p.poe_w ? `, ${p.poe_w} Вт` : ""}` : ""}</div>
         <div class="who">${who}</div>
         ${ctl ? `<div class="actions">${ctl}</div>` : ""}
+        ${this._portMsg && this._portMsg.key === `${w.subentry_id}:${sel}`
+          ? `<div class="sub ${this._portMsg.ok ? "good" : "bad"}">${esc(this._portMsg.text)}</div>` : ""}
+        ${!w.online ? `<div class="sub warn">Коммутатор сейчас не ответил на опрос — команда может не пройти, повторите через минуту.</div>` : ""}
       </div>`;
     }
     return `
@@ -711,6 +717,11 @@ class SiteHealthPanel extends HTMLElement {
     const on = root.querySelector("#online");
     if (on) on.addEventListener("change", () => { this._onlyOnline = on.checked; this._render(); });
     const site = (el) => this._sites.find((x) => x.entry_id === el.dataset.entry);
+    const vs = root.getElementById ? root.getElementById("vlansel") : root.querySelector("#vlansel");
+    if (vs) {
+      vs.addEventListener("change", () => { if (this._port) this._port.pick = vs.value; });
+      vs.addEventListener("blur", () => { if (this._deferred) { this._deferred = false; setTimeout(() => this._render(), 0); } });
+    }
     root.querySelectorAll("[data-do]").forEach((b) => b.addEventListener("click", () => {
       const d = b.dataset;
       switch (d.do) {
@@ -742,7 +753,7 @@ class SiteHealthPanel extends HTMLElement {
           this._confirm = { sw: this._port.sw, idx: this._port.idx, action: d.action };
           break;
         case "sw-vlan": {
-          const v = this.shadowRoot.getElementById("vlansel").value;
+          const v = this._port.pick !== undefined ? String(this._port.pick) : this.shadowRoot.getElementById("vlansel").value;
           this._confirm = { sw: this._port.sw, idx: this._port.idx, action: "vlan",
             vlan: v === "trunk" ? "trunk" : Number(v) };
           break;
@@ -753,7 +764,14 @@ class SiteHealthPanel extends HTMLElement {
           const msg = c.action === "vlan"
             ? { type: "site_health/switch_vlan", switch: c.sw, port: c.idx, vlan: c.vlan }
             : { type: "site_health/switch_port", switch: c.sw, port: c.idx, action: c.action };
-          this._call(msg, `${c.sw}:${c.idx}`);
+          const key = `${c.sw}:${c.idx}`;
+          this._portMsg = { key, ok: true, text: "Отправляю на коммутатор…" };
+          this._call(msg, key).then((res) => {
+            this._portMsg = res ? { key, ok: true, text: "Готово" }
+              : { key, ok: false, text: `Не получилось: ${this._error || "коммутатор не ответил"}` };
+            if (this._port) delete this._port.pick;
+            this._render();
+          });
           return;
         }
         case "name-edit": {
