@@ -47,6 +47,7 @@ def _modem_view(coord) -> dict[str, Any]:
         "online": coord.last_update_success,
         "error": coord.last_error,
         "restarting": coord.restart_state,
+        "restart_check": coord.restart_check,
         "info": info,
     }
 

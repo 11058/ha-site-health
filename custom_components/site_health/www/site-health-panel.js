@@ -241,6 +241,7 @@ class SiteHealthPanel extends HTMLElement {
 
   async _call(msg, busyKey) {
     if (busyKey) this._busy.add(busyKey);
+    this._error = "";
     this._render();
     let res = null;
     try {
@@ -249,7 +250,10 @@ class SiteHealthPanel extends HTMLElement {
       this._error = `${busyKey || msg.type}: ${e.message || e}`;
     }
     if (busyKey) this._busy.delete(busyKey);
+    const err = this._error;
     await this._load();
+    if (res === null && err) this._error = err; // keep the action's error visible
+    this._render();
     return res;
   }
 
@@ -465,6 +469,8 @@ class SiteHealthPanel extends HTMLElement {
         ${others.join("")}
         ${actions ? `<div class="actions">${actions}</div>` : ""}`}
         ${restart ? `<div class="actions">${restart}</div>` : ""}
+        ${this._admin && m.restart_check && m.restart_check !== "ok"
+          ? `<div class="sub warn">Перезапуск через веб-интерфейс недоступен: ${esc(m.restart_check)}</div>` : ""}
       </section>`;
   }
 

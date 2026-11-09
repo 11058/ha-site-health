@@ -373,6 +373,7 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
         self._slow_at = 0.0
         self._last_auto = 0.0
         self.restarting: tuple[str, float] | None = None
+        self.restart_check: str | None = None
 
     @property
     def host(self) -> str:
@@ -444,6 +445,14 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
                 self._save()
         except TandemError as err:
             _LOGGER.debug("failover settings not read: %s", err)
+        if self.restart_check is None:
+            self.restart_check = await self.client.restart_check()
+            if self.restart_check != "ok":
+                _LOGGER.warning(
+                    "%s: reconnect/reboot unavailable: %s",
+                    self.device_name,
+                    self.restart_check,
+                )
 
     async def _request_balance(self, request: tuple[str, str]) -> None:
         number, text = request
@@ -472,12 +481,20 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
     RESTART_S = {"reconnect": (10, 90), "reboot": (60, 300)}
 
     async def async_reconnect(self) -> None:
-        await self.client.reconnect()
+        try:
+            await self.client.reconnect()
+        except TandemError as err:
+            _LOGGER.warning("%s: reconnect failed: %s", self.device_name, err)
+            raise
         self.restarting = ("reconnect", time.time())
         self.async_update_listeners()
 
     async def async_reboot(self) -> None:
-        await self.client.reboot()
+        try:
+            await self.client.reboot()
+        except TandemError as err:
+            _LOGGER.warning("%s: reboot failed: %s", self.device_name, err)
+            raise
         self.restarting = ("reboot", time.time())
         self.async_update_listeners()
 

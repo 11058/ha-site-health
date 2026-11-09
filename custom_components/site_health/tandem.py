@@ -161,7 +161,7 @@ class TandemClient:
             raise TandemError(f"{self._host}: {err}") from err
         return parse_failover(html)
 
-    async def _page(self, path: str) -> str:
+    async def _page(self, path: str) -> tuple[int, str]:
         if self._cookie is None:
             await self.login()
         try:
@@ -171,18 +171,30 @@ class TandemClient:
                 allow_redirects=False,
                 timeout=self._timeout,
             ) as resp:
-                return await resp.text()
+                return resp.status, await resp.text()
         except (ClientError, TimeoutError, OSError) as err:
             raise TandemError(f"{self._host}: {err}") from err
 
     async def _token(self) -> str:
         """CSRF token LuCI wants on every state-changing POST."""
+        status = 0
         for _attempt in range(2):
-            m = _TOKEN_RE.search(await self._page(TOKEN_PAGE))
+            status, html = await self._page(TOKEN_PAGE)
+            m = _TOKEN_RE.search(html)
             if m:
                 return m.group(1)
             self._cookie = None  # the session may have expired: log in again
-        raise TandemError("no LuCI token on the reboot page (firmware differs)")
+        raise TandemError(
+            f"no LuCI token on {TOKEN_PAGE} (HTTP {status}): this firmware differs"
+        )
+
+    async def restart_check(self) -> str:
+        """Read-only: is the page with the CSRF token there? Nothing is posted."""
+        try:
+            await self._token()
+        except TandemError as err:
+            return str(err)
+        return "ok"
 
     async def _post(self, path: str, *, dropped_ok: bool = False) -> int:
         token = await self._token()
@@ -201,7 +213,7 @@ class TandemClient:
                 return 0  # the router went down before answering: that is the point
             raise TandemError(f"{self._host}: {err}") from err
         if status == 404:
-            raise TandemError("this firmware has no such command")
+            raise TandemError(f"this firmware has no {path} (HTTP 404)")
         if status == 403:
             raise TandemAuthError("command rejected (token or rights)")
         if status >= 400:
