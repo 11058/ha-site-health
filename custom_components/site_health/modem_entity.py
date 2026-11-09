@@ -10,7 +10,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.components.button import ButtonEntity
+from homeassistant.components.button import ButtonDeviceClass, ButtonEntity
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -23,6 +23,7 @@ from homeassistant.const import (
     EntityCategory,
     UnitOfTemperature,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -30,7 +31,7 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .coordinator import ModemCoordinator
 from .models import ModemInfo
-from .tandem import signal_quality
+from .tandem import TandemError, signal_quality
 
 
 class ModemEntity(CoordinatorEntity[ModemCoordinator]):
@@ -197,6 +198,27 @@ class ModemSimButton(ModemEntity, ButtonEntity):
         await self.coordinator.async_select_sim(self._slot)
 
 
+class ModemRestartButton(ModemEntity, ButtonEntity):
+    """«Переподключить сотовую связь» (new data session) or reboot the router."""
+
+    def __init__(self, coordinator: ModemCoordinator, what: str) -> None:
+        super().__init__(coordinator, what)
+        self._what = what
+        self._attr_translation_key = f"modem_{what}"
+        self._attr_entity_category = EntityCategory.CONFIG
+        if what == "reboot":
+            self._attr_device_class = ButtonDeviceClass.RESTART
+
+    async def async_press(self) -> None:
+        try:
+            if self._what == "reboot":
+                await self.coordinator.async_reboot()
+            else:
+                await self.coordinator.async_reconnect()
+        except TandemError as err:
+            raise HomeAssistantError(str(err)) from err
+
+
 class ModemBalanceButton(ModemEntity, ButtonEntity):
     """Ask the operator for the balance by a free SMS."""
 
@@ -213,4 +235,6 @@ def modem_buttons(c: ModemCoordinator) -> list[ButtonEntity]:
     slots = (c.data.sim_slots if c.data else None) or 2
     buttons: list[ButtonEntity] = [ModemSimButton(c, s) for s in range(1, slots + 1)]
     buttons.append(ModemBalanceButton(c))
+    buttons.append(ModemRestartButton(c, "reconnect"))
+    buttons.append(ModemRestartButton(c, "reboot"))
     return buttons

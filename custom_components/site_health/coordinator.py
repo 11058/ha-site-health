@@ -372,6 +372,7 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
         self._saved: dict[str, Any] = {}
         self._slow_at = 0.0
         self._last_auto = 0.0
+        self.restarting: tuple[str, float] | None = None
 
     @property
     def host(self) -> str:
@@ -466,6 +467,34 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
     async def async_select_sim(self, slot: int) -> None:
         await self.client.select_sim(slot)
         await self.async_request_refresh()
+
+    # what -> (min seconds before "back" counts, give up after)
+    RESTART_S = {"reconnect": (10, 90), "reboot": (60, 300)}
+
+    async def async_reconnect(self) -> None:
+        await self.client.reconnect()
+        self.restarting = ("reconnect", time.time())
+        self.async_update_listeners()
+
+    async def async_reboot(self) -> None:
+        await self.client.reboot()
+        self.restarting = ("reboot", time.time())
+        self.async_update_listeners()
+
+    @property
+    def restart_state(self) -> str | None:
+        """'reconnect' / 'reboot' while it is still in progress, for the panel."""
+        if not self.restarting:
+            return None
+        what, since = self.restarting
+        least, most = self.RESTART_S[what]
+        age = time.time() - since
+        data = self.data
+        back = self.last_update_success and data is not None and bool(data.connected)
+        if age > most or (age > least and back):
+            self.restarting = None
+            return None
+        return what
 
 
 class SwitchCoordinator(DataUpdateCoordinator[SwitchInfo]):

@@ -46,6 +46,7 @@ def _modem_view(coord) -> dict[str, Any]:
         "host": coord.host,
         "online": coord.last_update_success,
         "error": coord.last_error,
+        "restarting": coord.restart_state,
         "info": info,
     }
 
@@ -228,6 +229,31 @@ async def ws_modem_sim(hass: HomeAssistant, connection, msg: dict) -> None:
         connection.send_error(msg["id"], "failed", str(err))
         return
     connection.send_result(msg["id"], {"slot": msg["slot"]})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/modem_restart",
+        vol.Required("modem"): str,
+        vol.Required("what"): vol.In(["reconnect", "reboot"]),
+    }
+)
+@websocket_api.async_response
+async def ws_modem_restart(hass: HomeAssistant, connection, msg: dict) -> None:
+    from . import _find_modem
+    from .tandem import TandemError
+
+    try:
+        coord = _find_modem(hass, msg["modem"])
+        if msg["what"] == "reboot":
+            await coord.async_reboot()
+        else:
+            await coord.async_reconnect()
+    except (HomeAssistantError, TandemError) as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    connection.send_result(msg["id"], {"what": msg["what"]})
 
 
 async def _switch_action(hass, connection, msg, action) -> None:
@@ -585,6 +611,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
         ws_family_remove,
         ws_set_segment,
         ws_modem_sim,
+        ws_modem_restart,
         ws_switch_vlan,
         ws_switch_port,
         ws_modem_balance,

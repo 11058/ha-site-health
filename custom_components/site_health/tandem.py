@@ -32,6 +32,15 @@ SLOT = "admin/status/modem/action_slot/{slot}"
 SMS_LIST = "admin/status/modem/action_read_sms/all?block=1"
 SMS_SEND = "admin/status/modem/action_send_sms/{kind}"
 DEVICE_FORM = "admin/network/modem/device"
+# Stock OpenWrt 19.07 LuCI (NetOS 19.8 is built on it); both need the CSRF token.
+TOKEN_PAGE = "admin/system/reboot"
+RECONNECT = "admin/network/iface_reconnect/{iface}"
+REBOOT = "admin/system/reboot/call"
+MODEM_IFACE = "modem"  # network.interface.modem (proto mobile, wwan0)
+_TOKEN_RE = re.compile(
+    r"""(?:name=["']token["']\s+value=|["']?token["']?\s*[:=]\s*)"""
+    r"""["']([0-9a-f]{16,64})["']"""
+)
 
 # Free balance requests by SMS (USSD does not work on this firmware).
 # Operator name as the SIM reports it -> (number, text).
@@ -151,6 +160,62 @@ class TandemClient:
         except (ClientError, TimeoutError, OSError) as err:
             raise TandemError(f"{self._host}: {err}") from err
         return parse_failover(html)
+
+    async def _page(self, path: str) -> str:
+        if self._cookie is None:
+            await self.login()
+        try:
+            async with self._session.get(
+                f"{self._base}/{path}",
+                cookies={"sysauth": self._cookie or ""},
+                allow_redirects=False,
+                timeout=self._timeout,
+            ) as resp:
+                return await resp.text()
+        except (ClientError, TimeoutError, OSError) as err:
+            raise TandemError(f"{self._host}: {err}") from err
+
+    async def _token(self) -> str:
+        """CSRF token LuCI wants on every state-changing POST."""
+        for _attempt in range(2):
+            m = _TOKEN_RE.search(await self._page(TOKEN_PAGE))
+            if m:
+                return m.group(1)
+            self._cookie = None  # the session may have expired: log in again
+        raise TandemError("no LuCI token on the reboot page (firmware differs)")
+
+    async def _post(self, path: str, *, dropped_ok: bool = False) -> int:
+        token = await self._token()
+        try:
+            async with self._session.post(
+                f"{self._base}/{path}",
+                data={"token": token},
+                cookies={"sysauth": self._cookie or ""},
+                allow_redirects=False,
+                timeout=self._timeout,
+            ) as resp:
+                await resp.read()
+                status = resp.status
+        except (ClientError, TimeoutError, OSError) as err:
+            if dropped_ok:
+                return 0  # the router went down before answering: that is the point
+            raise TandemError(f"{self._host}: {err}") from err
+        if status == 404:
+            raise TandemError("this firmware has no such command")
+        if status == 403:
+            raise TandemAuthError("command rejected (token or rights)")
+        if status >= 400:
+            raise TandemError(f"command failed ({status})")
+        return status
+
+    async def reconnect(self, iface: str = MODEM_IFACE) -> None:
+        """Bring the cellular interface down and up: a new data session, 10-30 s."""
+        await self._post(RECONNECT.format(iface=iface))
+
+    async def reboot(self) -> None:
+        """Reboot the whole router: 1-2 min without the uplink."""
+        await self._post(REBOOT, dropped_ok=True)
+        self._cookie = None
 
     async def select_sim(self, slot: int) -> None:
         data = await self._get_json(SLOT.format(slot=int(slot)))

@@ -432,6 +432,12 @@
       },
       "modem_balance_request": {
         "name": "Запросить баланс"
+      },
+      "modem_reconnect": {
+        "name": "Переподключить сотовую связь"
+      },
+      "modem_reboot": {
+        "name": "Перезагрузить роутер"
       }
     }
   },

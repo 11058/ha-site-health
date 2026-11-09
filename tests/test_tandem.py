@@ -87,3 +87,14 @@ def test_failover_form():
         "sim1_control": "reconnect",
         "sim1_ping": "10",
     }
+
+
+def test_luci_token_forms():
+    # LuCI 19.07 pages carry the CSRF token either in a hidden input or in L.env
+    for html in (
+        '<input type="hidden" name="token" value="0123456789abcdef0123456789abcdef" />',
+        '<script>L = new LuCI({"token":"0123456789abcdef0123456789abcdef"});</script>',
+        "var x = { token: '0123456789abcdef0123456789abcdef' };",
+    ):
+        m = tandem._TOKEN_RE.search(html)
+        assert m and m.group(1) == "0123456789abcdef0123456789abcdef", html

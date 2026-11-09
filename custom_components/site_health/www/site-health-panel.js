@@ -421,11 +421,30 @@ class SiteHealthPanel extends HTMLElement {
         }
       }
     }
+    const RESTART = {
+      reconnect: ["Переподключить сотовую связь", "Интернет через этот канал пропадёт на 10–30 с.", "Переподключаю сотовую связь…"],
+      reboot: ["Перезагрузить роутер", "Роутер и интернет через него пропадут на 1–2 мин.", "Роутер перезагружается…"],
+    };
+    let restart = "";
+    if (this._admin && (m.online || m.restarting)) {
+      for (const what of ["reconnect", "reboot"]) {
+        const [label, warn] = RESTART[what];
+        if (this._confirm && this._confirm.modem === m.subentry_id && this._confirm.restart === what) {
+          restart += `<span class="sub">${warn}</span>
+            <button class="act primary" data-do="restart" data-modem="${esc(m.subentry_id)}" data-what="${what}">${label}</button>
+            <button class="act" data-do="cancel">Отмена</button>`;
+        } else if (!(this._confirm && this._confirm.restart && this._confirm.modem === m.subentry_id)) {
+          restart += `<button class="act" ${m.restarting || this._busy.has(`rst${m.subentry_id}`) ? "disabled" : ""}
+            data-do="ask-restart" data-modem="${esc(m.subentry_id)}" data-what="${what}">${label}</button>`;
+        }
+      }
+    }
     const val = (v, u) => (v === null || v === undefined ? "—" : `${v}${u || ""}`);
     return `
       <section class="card">
         <h2>${esc(m.name)} <span class="sub">${esc(m.host)}</span></h2>
-        ${!m.online ? `<div class="sub bad">Нет связи с модемом: ${esc(m.error || "")}</div>` : `
+        ${m.restarting ? `<div class="sub warn">${RESTART[m.restarting][2]}</div>` : ""}
+        ${!m.online ? (m.restarting ? "" : `<div class="sub bad">Нет связи с модемом: ${esc(m.error || "")}</div>`) : `
         <table>
           <tr><td>${dot(i.connected === true ? true : i.connecting ? null : false)} Подключение</td>
             <td>${i.connected ? `на связи ${dur(i.uptime_s)}` : i.connecting ? "подключается…" : "нет"}</td></tr>
@@ -445,6 +464,7 @@ class SiteHealthPanel extends HTMLElement {
         </table>
         ${others.join("")}
         ${actions ? `<div class="actions">${actions}</div>` : ""}`}
+        ${restart ? `<div class="actions">${restart}</div>` : ""}
       </section>`;
   }
 
@@ -788,6 +808,11 @@ class SiteHealthPanel extends HTMLElement {
           return;
         }
         case "vpn": this._vpnOpen(d.entry); break;
+        case "ask-restart": this._confirm = { modem: d.modem, restart: d.what }; break;
+        case "restart":
+          this._confirm = null;
+          this._call({ type: "site_health/modem_restart", modem: d.modem, what: d.what }, `rst${d.modem}`);
+          return;
         case "balance":
           this._call({ type: "site_health/modem_balance", modem: d.modem }, `bal${d.modem}`);
           return;

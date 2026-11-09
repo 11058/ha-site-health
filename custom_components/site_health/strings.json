@@ -432,6 +432,12 @@
       },
       "modem_balance_request": {
         "name": "Request balance"
+      },
+      "modem_reconnect": {
+        "name": "Reconnect cellular"
+      },
+      "modem_reboot": {
+        "name": "Reboot router"
       }
     }
   },
