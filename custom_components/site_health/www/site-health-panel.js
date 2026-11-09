@@ -1159,6 +1159,8 @@ class SiteHealthPanel extends HTMLElement {
 const STYLE = `
   :host { display:block; background: var(--primary-background-color); color: var(--primary-text-color);
     min-height: 100vh; font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif); overflow-x: hidden; }
+  :host([embedded]) { min-height: 0; background: transparent; }
+  :host([embedded]) .toolbar { display: none; }
   .toolbar { display:flex; align-items:center; height:56px; padding:0 12px; gap:8px;
     background: var(--app-header-background-color, var(--primary-color)); color: var(--app-header-text-color, #fff); }
   .title { font-size: 20px; }
@@ -1274,4 +1276,28 @@ const STYLE = `
 // HA may load a newer bundle (new ?v=) into a page that already has one.
 if (!customElements.get("site-health-panel")) {
   customElements.define("site-health-panel", SiteHealthPanel);
+}
+
+// Dashboard card: the same page inside a dashboard view, e.g. a tab at the top.
+//   type: custom:site-health-card
+// Best in a view of type «Панель» (one card on the whole width).
+class SiteHealthCard extends HTMLElement {
+  setConfig(config) { this._config = config || {}; }
+  set hass(h) {
+    if (!this._page) {
+      this._page = document.createElement("site-health-panel");
+      this._page.setAttribute("embedded", "");
+      this.appendChild(this._page);
+    }
+    this._page.narrow = window.innerWidth < 870;
+    this._page.hass = h;
+  }
+  getCardSize() { return 12; }
+  getGridOptions() { return { columns: "full", rows: "auto" }; }
+  static getStubConfig() { return {}; }
+}
+if (!customElements.get("site-health-card")) {
+  customElements.define("site-health-card", SiteHealthCard);
+  window.customCards = window.customCards || [];
+  window.customCards.push({ type: "site-health-card", name: "Здоровье сети", description: "Каналы, клиенты, Wi-Fi, коммутаторы и модем — та же страница, что в боковом меню." });
 }

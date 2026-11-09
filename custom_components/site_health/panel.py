@@ -28,6 +28,10 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     from homeassistant.loader import async_get_integration
 
     version = (await async_get_integration(hass, DOMAIN)).version or "0"
+    # Also on every dashboard: the same page as a card (custom:site-health-card).
+    from homeassistant.components.frontend import add_extra_js_url
+
+    add_extra_js_url(hass, f"{PANEL_STATIC}/{BUNDLE}?v={version}")
     await panel_custom.async_register_panel(
         hass,
         webcomponent_name=PANEL_ELEMENT,
