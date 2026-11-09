@@ -478,7 +478,7 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
         await self.async_request_refresh()
 
     # what -> (min seconds before "back" counts, give up after)
-    RESTART_S = {"reconnect": (10, 90), "reboot": (60, 300)}
+    RESTART_S = {"reconnect": (5, 90), "reboot": (60, 300)}
 
     async def async_reconnect(self) -> None:
         try:

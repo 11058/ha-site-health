@@ -14,7 +14,6 @@ it was active.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -33,11 +32,9 @@ SLOT = "admin/status/modem/action_slot/{slot}"
 SMS_LIST = "admin/status/modem/action_read_sms/all?block=1"
 SMS_SEND = "admin/status/modem/action_send_sms/{kind}"
 DEVICE_FORM = "admin/network/modem/device"
-# Stock OpenWrt 19.07 LuCI (NetOS 19.8 is built on it); both need the CSRF token.
+# Stock OpenWrt 19.07 LuCI reboot (NetOS 19.8 is built on it); needs the CSRF token.
 TOKEN_PAGE = "admin/system/reboot"
-RECONNECT = "admin/network/iface_reconnect/{iface}"
 REBOOT = "admin/system/reboot/call"
-MODEM_IFACE = "modem"  # network.interface.modem (proto mobile, wwan0)
 _TOKEN_RE = re.compile(
     r"""(?:name=["']token["']\s+value=|["']?token["']?\s*[:=]\s*)"""
     r"""["']([0-9a-f]{16,64})["']"""
@@ -189,52 +186,10 @@ class TandemClient:
             f"no LuCI token on {TOKEN_PAGE} (HTTP {status}): this firmware differs"
         )
 
-    async def _ubus(self, obj: str, method: str, args: dict | None = None) -> Any:
-        """ubus over LuCI's JSON-RPC (/ubus); the LuCI cookie is the rpcd session."""
-        if self._cookie is None:
-            await self.login()
-        body = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "call",
-            "params": [self._cookie, obj, method, args or {}],
-        }
-        try:
-            async with self._session.post(
-                f"http://{self._host}/ubus", json=body, timeout=self._timeout
-            ) as resp:
-                status = resp.status
-                text = await resp.text()
-        except (ClientError, TimeoutError, OSError) as err:
-            raise TandemError(f"{self._host}: {err}") from err
-        if status == 404:
-            raise TandemError("this firmware has no /ubus (HTTP 404)")
-        try:
-            data = json.loads(text)
-        except ValueError as err:
-            raise TandemError(f"/ubus: unexpected answer {text[:80]}") from err
-        if "error" in data:
-            raise TandemError(f"/ubus {obj} {method}: {data['error'].get('message')}")
-        result = data.get("result") or [None]
-        if result[0] != 0:
-            raise TandemError(f"/ubus {obj} {method}: code {result[0]}")
-        return result[1] if len(result) > 1 else None
-
-    async def _ubus_allowed(self, obj: str, method: str) -> bool:
-        """Read-only ACL question, nothing is executed."""
-        res = await self._ubus(
-            "session", "access",
-            {"scope": "ubus", "object": obj, "function": method},
-        )  # fmt: skip
-        return bool((res or {}).get("access"))
-
     async def restart_check(self) -> str:
         """Read-only: can reboot and reconnect be sent? Nothing is executed."""
         try:
             await self._token()
-            iface = f"network.interface.{MODEM_IFACE}"
-            if not await self._ubus_allowed(iface, "down"):
-                return f"no rights for ubus {iface} down/up"
         except TandemError as err:
             return str(err)
         return "ok"
@@ -263,22 +218,19 @@ class TandemClient:
             raise TandemError(f"command failed ({status})")
         return status
 
-    async def reconnect(self, iface: str = MODEM_IFACE) -> None:
-        """Bring the cellular interface down and up: a new data session, 10-30 s.
+    async def reconnect(self) -> None:
+        """A new data session (6-30 s without the uplink).
 
-        Stock LuCI has admin/network/iface_reconnect; NetOS 19.8 dropped it
-        (404), so the same ifdown/ifup goes through ubus.
+        NetOS 19.8 has neither LuCI's iface_reconnect (404) nor ubus over HTTP
+        for the LuCI session (access denied). Selecting the SIM slot that is
+        already active makes the connection manager set the modem up again on
+        it: the same command as a SIM switch, without changing the SIM.
         """
-        try:
-            await self._post(RECONNECT.format(iface=iface))
-            return
-        except TandemError as err:
-            if "404" not in str(err):
-                raise
-        obj = f"network.interface.{iface}"
-        await self._ubus(obj, "down")
-        await asyncio.sleep(3)
-        await self._ubus(obj, "up")
+        out = await self.status()
+        slot = _int((out.get("sim") or {}).get("cur"))
+        if slot not in (1, 2):
+            raise TandemError("active SIM slot unknown")
+        await self.select_sim(slot)
 
     async def reboot(self) -> None:
         """Reboot the whole router: 1-2 min without the uplink."""
