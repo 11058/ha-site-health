@@ -374,6 +374,7 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
         self._last_auto = 0.0
         self.restarting: tuple[str, float] | None = None
         self.restart_check: str | None = None
+        self.reboot_hint: str | None = None
 
     @property
     def host(self) -> str:
@@ -447,6 +448,10 @@ class ModemCoordinator(DataUpdateCoordinator[ModemInfo]):
             _LOGGER.debug("failover settings not read: %s", err)
         if self.restart_check is None:
             self.restart_check = await self.client.restart_check()
+            try:
+                self.reboot_hint = await self.client.reboot_page_hint()
+            except TandemError as err:
+                self.reboot_hint = str(err)
             if self.restart_check != "ok":
                 _LOGGER.warning(
                     "%s: reconnect/reboot unavailable: %s",

@@ -186,6 +186,21 @@ class TandemClient:
             f"no LuCI token on {TOKEN_PAGE} (HTTP {status}): this firmware differs"
         )
 
+    async def reboot_page_hint(self) -> str:
+        """Read-only: where the firmware's own reboot page sends its command."""
+        status, html = await self._page(TOKEN_PAGE)
+        bits = re.findall(r"<form[^>]*>|<input[^>]*>|<button[^>]*>", html, re.I)
+        bits += re.findall(r"[^\n;]*(?:XHR|xhr|post|ubus|reboot)[^\n;]*\(", html)[:20]
+        bits += sorted(
+            set(
+                re.findall(
+                    r"/cgi-bin/luci/[A-Za-z0-9_/.\-]*reboot[A-Za-z0-9_/.\-]*", html
+                )
+            )
+        )
+        text = " | ".join(b.strip()[:200] for b in bits)
+        return f"HTTP {status}: {re.sub(r'[0-9a-f]{32}', '<token>', text)}"[:3000]
+
     async def restart_check(self) -> str:
         """Read-only: can reboot and reconnect be sent? Nothing is executed."""
         try:

@@ -48,6 +48,7 @@ def _modem_view(coord) -> dict[str, Any]:
         "error": coord.last_error,
         "restarting": coord.restart_state,
         "restart_check": coord.restart_check,
+        "reboot_hint": coord.reboot_hint,
         "info": info,
     }
 
