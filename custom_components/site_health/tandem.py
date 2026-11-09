@@ -34,7 +34,7 @@ SMS_SEND = "admin/status/modem/action_send_sms/{kind}"
 DEVICE_FORM = "admin/network/modem/device"
 # Stock OpenWrt 19.07 LuCI reboot (NetOS 19.8 is built on it); needs the CSRF token.
 TOKEN_PAGE = "admin/system/reboot"
-REBOOT = "admin/system/reboot/call"
+REBOOT = "admin/system/reboot/action_reboot"  # NetOS 19.8; stock 19.07: reboot/call
 _TOKEN_RE = re.compile(
     r"""(?:name=["']token["']\s+value=|["']?token["']?\s*[:=]\s*)"""
     r"""["']([0-9a-f]{16,64})["']"""
