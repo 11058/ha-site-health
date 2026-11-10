@@ -58,6 +58,7 @@ from .const import (
     SUBENTRY_GATEWAY,
     SUBENTRY_MODEM,
     SUBENTRY_SWITCH,
+    SUBENTRY_WATCHDOG,
 )
 from .coordinator import (
     DeviceCoordinator,
@@ -74,7 +75,12 @@ _LOGGER = logging.getLogger(__name__)
 
 PROVISION_INTERVAL = timedelta(minutes=10)
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -96,6 +102,8 @@ class SiteRuntime:
     # Admin VPN through hubs: wanted public keys and each hub's last report.
     gateways: dict[str, Any] = field(default_factory=dict)
     vpn_store: Any = None
+    # Auto restart rules (watchdog.py), by subentry id.
+    watchdogs: dict[str, Any] = field(default_factory=dict)
 
     def save_vpn(self) -> None:
         self.vpn_store.async_delay_save(
@@ -260,6 +268,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: SiteHealthConfigEntry) -
             site.infra_macs |= {i.mac for i in coord.data.interfaces.values() if i.mac}
 
     entry.runtime_data = runtime
+    from .watchdog import Watchdog
+
+    for sub_id, sub in entry.subentries.items():
+        if sub.subentry_type != SUBENTRY_WATCHDOG:
+            continue
+        wd = Watchdog(hass, runtime, sub_id, sub.title, dict(sub.data))
+        await wd.async_start()
+        entry.async_on_unload(wd.stop)
+        runtime.watchdogs[sub_id] = wd
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     if opts.get(CONF_AUTO_CONFIGURE, DEFAULT_AUTO_CONFIGURE):
         entry.async_create_background_task(

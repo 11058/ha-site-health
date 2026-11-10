@@ -44,6 +44,7 @@ from .const import (
     SUBENTRY_GATEWAY,
     SUBENTRY_MODEM,
     SUBENTRY_SWITCH,
+    SUBENTRY_WATCHDOG,
 )
 from .mikrotik import MikrotikAuthError, MikrotikError
 from .parsers import mikrotik_candidates
@@ -170,6 +171,7 @@ class SiteHealthConfigFlow(ConfigFlow, domain=DOMAIN):
             SUBENTRY_MODEM: ModemSubentryFlow,
             SUBENTRY_SWITCH: SwitchSubentryFlow,
             SUBENTRY_GATEWAY: GatewaySubentryFlow,
+            SUBENTRY_WATCHDOG: WatchdogSubentryFlow,
         }
 
     def __init__(self) -> None:
@@ -853,4 +855,160 @@ class GatewaySubentryFlow(ConfigSubentryFlow):
             step_id="reconfigure",
             data_schema=schema,
             description_placeholders={"script": self._script(sub.data)},
+        )
+
+
+NONE = "none"
+
+
+class WatchdogSubentryFlow(ConfigSubentryFlow):
+    """Auto restart: how to see that the internet is gone, and what to do."""
+
+    def _runtime(self):
+        return getattr(self._get_entry(), "runtime_data", None)
+
+    def _schema(self, d: dict[str, Any]) -> vol.Schema:
+        from .watchdog import DEFAULTS, STEP_WAIT_DEFAULT, STEPS, action_choices
+
+        runtime = self._runtime()
+        site = getattr(getattr(runtime, "site", None), "site", None)
+        d = {**DEFAULTS, **d}
+        sel = selector.SelectSelector
+        cfg = selector.SelectSelectorConfig
+        opt = selector.SelectOptionDict
+
+        def num(lo: int, hi: int, unit: str | None) -> selector.NumberSelector:
+            conf: dict[str, Any] = {
+                "min": lo, "max": hi, "step": 1,
+                "mode": selector.NumberSelectorMode.BOX,
+            }  # fmt: skip
+            if unit:
+                conf["unit_of_measurement"] = unit
+            return selector.NumberSelector(selector.NumberSelectorConfig(**conf))
+
+        tables = ["main"]
+        hosts: list[str] = []
+        if site is not None:
+            for wan in site.wans.values():
+                for route in getattr(wan, "routes", []) or []:
+                    if route.table and route.table not in tables:
+                        tables.append(route.table)
+            hosts = [p.host for p in site.probes.values() if p.host]
+        actions = action_choices(runtime)
+        step_opts = [opt(value=NONE, label="— нет —")] + [
+            opt(value=k, label=v) for k, v in actions.items()
+        ]
+        modems = list(getattr(runtime, "modems", {}) or {})
+        guess = {1: "", 2: "", 3: "", 4: ""}
+        if modems:
+            guess[1] = f"modem:{modems[0]}:reconnect"
+            guess[2] = f"modem:{modems[0]}:reboot"
+        notify = sorted(
+            f"notify.{name}"
+            for name in self.hass.services.async_services().get("notify", {})
+        )
+        fields: dict[Any, Any] = {
+            vol.Required("name", default=d.get("name", "Нет интернета")): str,
+            vol.Required("probe", default=d["probe"]): sel(
+                cfg(options=["router", "netwatch", "ha"], translation_key="wd_probe")
+            ),
+            vol.Required("targets", default=d["targets"]): str,
+            vol.Optional("routing_table", default=d["routing_table"]): sel(
+                cfg(options=tables, custom_value=True)
+            ),
+            vol.Optional("netwatch_host", default=d["netwatch_host"] or ""): (
+                sel(cfg(options=hosts, custom_value=True)) if hosts else str
+            ),
+            vol.Required("interval_s", default=d["interval_s"]): num(10, 600, "с"),
+            vol.Required("down_after_min", default=d["down_after_min"]): num(
+                1, 240, "мин"
+            ),
+        }
+        for i in range(1, STEPS + 1):
+            cur = d.get(f"step{i}", guess[i]) or NONE
+            if cur != NONE and cur not in actions:
+                step_opts.append(opt(value=cur, label=f"{cur} (нет на объекте)"))
+            fields[vol.Required(f"step{i}", default=cur)] = sel(cfg(options=step_opts))
+            fields[
+                vol.Required(
+                    f"step{i}_wait",
+                    default=d.get(f"step{i}_wait", STEP_WAIT_DEFAULT[i]),
+                )
+            ] = num(1, 120, "мин")
+        power = d.get("power_entity") or None
+        fields[
+            vol.Optional(
+                "power_entity",
+                description={"suggested_value": power} if power else None,
+            )
+        ] = selector.EntitySelector(
+            selector.EntitySelectorConfig(domain=["switch", "light", "input_boolean"])
+        )
+        fields[vol.Required("power_off_s", default=d["power_off_s"])] = num(3, 600, "с")
+        fields[vol.Required("max_cycles", default=d["max_cycles"])] = num(1, 50, None)
+        fields[vol.Required("window_h", default=d["window_h"])] = num(1, 168, "ч")
+        fields[vol.Required("cooldown_min", default=d["cooldown_min"])] = num(
+            0, 1440, "мин"
+        )
+        fields[vol.Required("notify_admins", default=d["notify_admins"])] = bool
+        fields[
+            vol.Optional("notify_services", default=list(d["notify_services"] or []))
+        ] = sel(cfg(options=notify, multiple=True, custom_value=True))
+        fields[vol.Required("notify_only", default=d["notify_only"])] = bool
+        return vol.Schema(fields)
+
+    @staticmethod
+    def _clean(user_input: dict[str, Any]) -> dict[str, Any]:
+        data = dict(user_input)
+        for k, v in list(data.items()):
+            if isinstance(v, float) and v.is_integer():
+                data[k] = int(v)
+            if v == NONE:
+                data[k] = ""
+        data.setdefault("power_entity", "")
+        return data
+
+    def _errors(self, data: dict[str, Any]) -> dict[str, str]:
+        errors: dict[str, str] = {}
+        if data["probe"] == "netwatch" and not data.get("netwatch_host"):
+            errors["netwatch_host"] = "netwatch_needed"
+        if data["probe"] != "netwatch" and not str(data.get("targets") or "").strip():
+            errors["targets"] = "targets_needed"
+        if any(data.get(f"step{i}") == "power" for i in range(1, 5)) and not data.get(
+            "power_entity"
+        ):
+            errors["power_entity"] = "power_needed"
+        return errors
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            data = self._clean(user_input)
+            errors = self._errors(data)
+            if not errors:
+                title = data.pop("name")
+                return self.async_create_entry(title=title, data=data)
+        return self.async_show_form(
+            step_id="user", data_schema=self._schema(user_input or {}), errors=errors
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        sub = self._get_reconfigure_subentry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            data = self._clean(user_input)
+            errors = self._errors(data)
+            if not errors:
+                title = data.pop("name")
+                return self.async_update_and_abort(
+                    self._get_entry(), sub, title=title, data=data
+                )
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self._schema(user_input or {**sub.data, "name": sub.title}),
+            errors=errors,
         )

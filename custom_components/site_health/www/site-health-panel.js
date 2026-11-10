@@ -308,6 +308,7 @@ class SiteHealthPanel extends HTMLElement {
       <div class="grid">
         ${this._channels(s)}
         ${(s.modems || []).map((m) => this._modem(s, m)).join("")}
+        ${this._watchdogs(s)}
         ${this._devices(s)}
         ${this._radio(s)}
         ${this._admin ? this._vpnCard(s) : ""}
@@ -395,6 +396,50 @@ class SiteHealthPanel extends HTMLElement {
         ${svc ? `<div class="sub" style="margin-top:8px">служебные маршруты: ${svc}</div>` : ""}
         ${probes ? `<h3>Проверки (netwatch)</h3><table>${probes}</table>` : ""}
       </section>`;
+  }
+
+  _watchdogs(s) {
+    const list = s.watchdogs || [];
+    if (!list.length) {
+      return this._admin && (s.modems || []).length ? `
+      <section class="card"><h2>Автоперезапуск</h2>
+        <div class="sub">Не настроен. Добавить: Настройки → Устройства и службы → Здоровье сети →
+          «Добавить» → «Автоперезапуск».</div></section>` : "";
+    }
+    const STATE = {
+      ok: ["good", "интернет есть"], down: ["bad", "нет интернета"],
+      acting: ["warn", "выполняю шаги"], gave_up: ["bad", "сдался — все шаги выполнены или лимит"],
+    };
+    const now = Date.now() / 1000;
+    const rows = list.map((w) => {
+      const [cls, text] = STATE[w.state] || ["", w.state];
+      const since = w.since ? ` ${dur(now - w.since)}` : "";
+      const steps = (w.steps || []).map((st, i) => `<li class="${w.step === i ? "warn" : ""}">${esc(st.label)}
+        <span class="sub">→ ждать ${st.wait_min} мин</span></li>`).join("");
+      const log = (w.log || []).slice(0, 8).map((e) => `<tr><td class="sub num">${
+        new Date(e.ts * 1000).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
+        <td class="${e.kind === "bad" ? "bad" : e.kind === "ok" ? "good" : e.kind === "warn" ? "warn" : ""}">${esc(e.text)}</td></tr>`).join("");
+      const msg = this._wdMsg && this._wdMsg.id === w.id ? `<div class="sub ${this._wdMsg.cls}">${esc(this._wdMsg.text)}</div>` : "";
+      let actions = "";
+      if (this._admin) {
+        actions = `<div class="actions">
+          <button class="act" data-do="wd" data-wd="${esc(w.id)}" data-op="check" ${this._busy.has(`wd${w.id}`) ? "disabled" : ""}>Проверить сейчас</button>
+          <button class="act" data-do="wd" data-wd="${esc(w.id)}" data-op="${w.paused ? "resume" : "pause"}">${w.paused ? "▶ Включить" : "⏸ Пауза"}</button>
+          ${w.state === "gave_up" || w.cycles_used ? `<button class="act" data-do="wd" data-wd="${esc(w.id)}" data-op="reset">Сбросить попытки</button>` : ""}
+        </div>`;
+      }
+      return `
+        <h3>${esc(w.title)} — <span class="${cls}">${text}${since}</span>${
+          w.paused ? ' <span class="warn">· на паузе</span>' : ""}${
+          w.notify_only ? ' <span class="sub">· только уведомлять</span>' : ""}</h3>
+        <div class="sub">${esc(w.last_detail || "ещё не проверялось")}${
+          w.last_check ? ` · ${dur(now - w.last_check)} назад` : ""}</div>
+        <div class="sub">Действовать после ${w.down_after_min} мин без интернета; попыток ${w.cycles_used} из ${w.max_cycles} за ${w.window_h} ч</div>
+        ${steps ? `<ol>${steps}</ol>` : '<div class="sub warn">шаги не заданы — только уведомления</div>'}
+        ${msg}${actions}
+        ${log ? `<details><summary class="sub">Журнал</summary><table>${log}</table></details>` : ""}`;
+    }).join("");
+    return `<section class="card"><h2>Автоперезапуск</h2>${rows}</section>`;
   }
 
   _modem(s, m) {
@@ -814,6 +859,17 @@ class SiteHealthPanel extends HTMLElement {
           return;
         }
         case "vpn": this._vpnOpen(d.entry); break;
+        case "wd": {
+          const op = d.op, id = d.wd;
+          this._call({ type: "site_health/watchdog", rule: id, do: op }, `wd${id}`).then((res) => {
+            if (op === "check" && res) {
+              this._wdMsg = { id, cls: res.ok === true ? "good" : res.ok === false ? "bad" : "warn",
+                text: `Проверка: ${res.ok === true ? "интернет есть" : res.ok === false ? "интернета нет" : "не удалась"} — ${res.detail}` };
+              this._render();
+            }
+          });
+          return;
+        }
         case "ask-restart": this._confirm = { modem: d.modem, restart: d.what }; break;
         case "restart":
           this._confirm = null;

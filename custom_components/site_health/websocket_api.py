@@ -80,6 +80,7 @@ def site_overview(hass: HomeAssistant) -> list[dict[str, Any]]:
                 "devices": [_device_view(c) for c in runtime.devices.values()],
                 "wans": [to_dict(w) for w in site.wans.values()] if site else [],
                 "probes": [to_dict(p) for p in site.probes.values()] if site else [],
+                "watchdogs": [w.view() for w in runtime.watchdogs.values()],
                 "tunnels": [to_dict(t) for t in site.tunnels.values()] if site else [],
                 "segments": [to_dict(s) for s in site.segments.values()]
                 if site
@@ -135,6 +136,11 @@ def ws_subscribe(hass: HomeAssistant, connection, msg: dict) -> None:
             *runtime.switches.values(),
         ]:
             unsubs.append(coord.async_add_listener(_changed))
+        for wd in runtime.watchdogs.values():
+            wd.listeners.append(_changed)
+            unsubs.append(
+                lambda wd=wd: _changed in wd.listeners and wd.listeners.remove(_changed)
+            )
 
     @callback
     def _unsub() -> None:
@@ -256,6 +262,42 @@ async def ws_modem_restart(hass: HomeAssistant, connection, msg: dict) -> None:
         connection.send_error(msg["id"], "failed", str(err))
         return
     connection.send_result(msg["id"], {"what": msg["what"]})
+
+
+def _find_watchdog(hass: HomeAssistant, wd_id: str):
+    from . import loaded_runtimes
+
+    for _entry, runtime in loaded_runtimes(hass):
+        if wd_id in runtime.watchdogs:
+            return runtime.watchdogs[wd_id]
+    raise HomeAssistantError("auto restart rule not found")
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/watchdog",
+        vol.Required("rule"): str,
+        vol.Required("do"): vol.In(["pause", "resume", "reset", "check"]),
+    }
+)
+@websocket_api.async_response
+async def ws_watchdog(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Pause / resume / reset a rule, or run its check now (read-only)."""
+    try:
+        wd = _find_watchdog(hass, msg["rule"])
+        if msg["do"] == "check":
+            ok, detail = await wd.check()
+            connection.send_result(msg["id"], {"ok": ok, "detail": detail})
+            return
+        if msg["do"] == "reset":
+            await wd.reset()
+        else:
+            await wd.set_paused(msg["do"] == "pause")
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    connection.send_result(msg["id"], wd.view())
 
 
 async def _switch_action(hass, connection, msg, action) -> None:
@@ -614,6 +656,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
         ws_set_segment,
         ws_modem_sim,
         ws_modem_restart,
+        ws_watchdog,
         ws_switch_vlan,
         ws_switch_port,
         ws_modem_balance,

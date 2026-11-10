@@ -231,6 +231,100 @@
         "already_configured": "This gateway is already added",
         "reconfigure_successful": "Saved"
       }
+    },
+    "watchdog": {
+      "entry_type": "Auto restart",
+      "initiate_flow": {
+        "user": "Add auto restart"
+      },
+      "step": {
+        "user": {
+          "title": "Auto restart when the internet is gone",
+          "description": "How to see the internet is gone, and what to do step by step.",
+          "data": {
+            "name": "Rule name",
+            "probe": "How to check the internet",
+            "targets": "Addresses to check",
+            "routing_table": "Routing table (router check)",
+            "netwatch_host": "Netwatch host",
+            "interval_s": "Check every",
+            "down_after_min": "Act after (without internet)",
+            "step1": "Step 1",
+            "step1_wait": "After step 1 wait",
+            "step2": "Step 2",
+            "step2_wait": "After step 2 wait",
+            "step3": "Step 3",
+            "step3_wait": "After step 3 wait",
+            "step4": "Step 4",
+            "step4_wait": "After step 4 wait",
+            "power_entity": "Power plug or relay",
+            "power_off_s": "Keep power off for",
+            "max_cycles": "At most attempts",
+            "window_h": "within",
+            "cooldown_min": "Pause after recovery",
+            "notify_admins": "Notify administrators (their phones in the HA app)",
+            "notify_services": "More notify services",
+            "notify_only": "Only notify, do nothing"
+          },
+          "data_description": {
+            "targets": "Comma separated. No internet = none answered. For the HA check host:port is allowed (443 by default).",
+            "routing_table": "main = the normal path; a backup uplink's table checks that uplink alone.",
+            "netwatch_host": "Host of an existing netwatch entry on the core router.",
+            "down_after_min": "Short outages that heal themselves are left alone.",
+            "step1": "Steps run one by one until the internet is back. Power cycling goes last.",
+            "power_entity": "The HA switch the equipment is plugged into (Tuya, ESPHome, Shelly...).",
+            "max_cycles": "Full passes through the steps; then notifications only until the internet is back or attempts are reset.",
+            "notify_only": "To start with: the rule tells what it would do but presses nothing."
+          }
+        },
+        "reconfigure": {
+          "title": "Auto restart: settings",
+          "description": "How to see the internet is gone, and what to do step by step.",
+          "data": {
+            "name": "Rule name",
+            "probe": "How to check the internet",
+            "targets": "Addresses to check",
+            "routing_table": "Routing table (router check)",
+            "netwatch_host": "Netwatch host",
+            "interval_s": "Check every",
+            "down_after_min": "Act after (without internet)",
+            "step1": "Step 1",
+            "step1_wait": "After step 1 wait",
+            "step2": "Step 2",
+            "step2_wait": "After step 2 wait",
+            "step3": "Step 3",
+            "step3_wait": "After step 3 wait",
+            "step4": "Step 4",
+            "step4_wait": "After step 4 wait",
+            "power_entity": "Power plug or relay",
+            "power_off_s": "Keep power off for",
+            "max_cycles": "At most attempts",
+            "window_h": "within",
+            "cooldown_min": "Pause after recovery",
+            "notify_admins": "Notify administrators (their phones in the HA app)",
+            "notify_services": "More notify services",
+            "notify_only": "Only notify, do nothing"
+          },
+          "data_description": {
+            "targets": "Comma separated. No internet = none answered. For the HA check host:port is allowed (443 by default).",
+            "routing_table": "main = the normal path; a backup uplink's table checks that uplink alone.",
+            "netwatch_host": "Host of an existing netwatch entry on the core router.",
+            "down_after_min": "Short outages that heal themselves are left alone.",
+            "step1": "Steps run one by one until the internet is back. Power cycling goes last.",
+            "power_entity": "The HA switch the equipment is plugged into (Tuya, ESPHome, Shelly...).",
+            "max_cycles": "Full passes through the steps; then notifications only until the internet is back or attempts are reset.",
+            "notify_only": "To start with: the rule tells what it would do but presses nothing."
+          }
+        }
+      },
+      "error": {
+        "netwatch_needed": "Pick a netwatch host",
+        "targets_needed": "Give at least one address",
+        "power_needed": "Pick a plug or relay for the power step"
+      },
+      "abort": {
+        "reconfigure_successful": "Saved"
+      }
     }
   },
   "options": {
@@ -395,6 +489,15 @@
       },
       "lte_operator": {
         "name": "{lte} operator"
+      },
+      "watchdog_state": {
+        "name": "State",
+        "state": {
+          "ok": "internet ok",
+          "down": "no internet",
+          "acting": "acting",
+          "gave_up": "gave up"
+        }
       }
     },
     "binary_sensor": {
@@ -438,6 +541,14 @@
       },
       "modem_reboot": {
         "name": "Reboot router"
+      },
+      "watchdog_reset": {
+        "name": "Reset attempts"
+      }
+    },
+    "switch": {
+      "watchdog_enabled": {
+        "name": "Auto restart"
       }
     }
   },
@@ -520,6 +631,13 @@
       "options": {
         "script": "Generate a script to paste",
         "manual": "I already have a login"
+      }
+    },
+    "wd_probe": {
+      "options": {
+        "router": "Ping from the core router",
+        "netwatch": "Netwatch on the core router",
+        "ha": "From Home Assistant (single uplink)"
       }
     }
   }

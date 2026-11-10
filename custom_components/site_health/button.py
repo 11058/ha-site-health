@@ -40,3 +40,7 @@ async def async_setup_entry(
         from .switch_entity import switch_buttons
 
         async_add_entities(switch_buttons(sw), config_subentry_id=sub_id)
+    for sub_id, wd in entry.runtime_data.watchdogs.items():
+        from .watchdog_entity import WatchdogResetButton
+
+        async_add_entities([WatchdogResetButton(wd)], config_subentry_id=sub_id)

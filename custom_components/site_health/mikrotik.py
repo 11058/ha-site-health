@@ -216,6 +216,46 @@ class MikrotikClient:
     async def wireless_access_list(self) -> list[dict]:
         return await self._list("interface/wireless/access-list", optional=True)
 
+    async def ping(
+        self, address: str, *, routing_table: str = "main", count: int = 2
+    ) -> bool:
+        """The router pings `address` itself; True if any reply came back."""
+        payload = {"address": address, "count": str(count)}
+        if routing_table and routing_table != "main":
+            payload["routing-table"] = routing_table
+        rows = await self._request("POST", "ping", payload) or []
+        for row in rows if isinstance(rows, list) else [rows]:
+            try:
+                if int(str(row.get("received", "0"))) > 0:
+                    return True
+            except ValueError:
+                pass
+            if row.get("time") and not row.get("status"):
+                return True
+        return False
+
+    async def reboot(self) -> None:
+        """Reboot the router. The answer often never comes: that is fine."""
+        try:
+            await self._request("POST", "system/reboot", {})
+        except MikrotikAuthError:
+            raise
+        except MikrotikError as err:
+            _LOGGER.debug(
+                "reboot of %s: %s (expected while it goes down)", self._host, err
+            )
+
+    async def bounce_interface(self, name: str, down_s: int = 5) -> None:
+        """Disable and enable an interface. Runs as one script on the router,
+        so the interface comes back even if HA loses the router meanwhile."""
+        if not all(ch.isalnum() or ch in "-_." for ch in name):
+            raise MikrotikError(f"bad interface name {name!r}")
+        script = (
+            f'/interface disable [find name="{name}"]; :delay {int(down_s)}s; '
+            f'/interface enable [find name="{name}"]'
+        )
+        await self._request("POST", "execute", {"script": script})
+
     async def netwatch(self) -> list[dict]:
         return await self._list("tool/netwatch", optional=True)
 

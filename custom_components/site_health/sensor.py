@@ -306,3 +306,7 @@ async def async_setup_entry(
         from .switch_entity import switch_sensors
 
         async_add_entities(switch_sensors(sw), config_subentry_id=sub_id)
+    for sub_id, wd in entry.runtime_data.watchdogs.items():
+        from .watchdog_entity import WatchdogSensor
+
+        async_add_entities([WatchdogSensor(wd)], config_subentry_id=sub_id)
