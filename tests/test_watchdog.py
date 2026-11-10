@@ -153,3 +153,41 @@ def test_labels():
     assert wd_mod.step_label("modem:m1:reboot", rt) == "Tandem: перезагрузить"
     assert "ether3" in wd_mod.step_label("router:core:iface:ether3", rt)
     assert wd_mod.step_label("switch:s1:port:2", rt).endswith("порт 3")
+
+
+def test_netwatch_any_up_is_ok(monkeypatch):
+    wd, _clock = make(monkeypatch)
+    rows = [
+        {"host": "8.8.8.8", "status": "down"},
+        {"host": "1.1.1.1", "status": "up"},
+        {"host": "10.5.1.10", "status": "down"},
+    ]
+
+    async def netwatch():
+        return rows
+
+    wd.runtime.site.client = SimpleNamespace(netwatch=netwatch)
+    ok, detail = asyncio.run(wd._check_netwatch(["8.8.8.8", "1.1.1.1"]))
+    assert ok is True and "1.1.1.1" in detail
+    rows[1]["status"] = "down"
+    ok, _ = asyncio.run(wd._check_netwatch(["8.8.8.8", "1.1.1.1"]))
+    assert ok is False
+    ok, _ = asyncio.run(wd._check_netwatch(["9.9.9.9"]))
+    assert ok is None
+
+
+def test_router_ping_without_rights_uses_netwatch(monkeypatch):
+    wd, _clock = make(monkeypatch)
+    mt = load_module("mikrotik")
+
+    async def ping(*a, **k):
+        raise mt.MikrotikError(
+            'POST ping failed: 500 {"detail":"not enough permissions (9)"}'
+        )
+
+    async def netwatch():
+        return [{"host": "1.1.1.1", "status": "up"}]
+
+    wd.runtime.site.client = SimpleNamespace(ping=ping, netwatch=netwatch)
+    ok, detail = asyncio.run(wd._check_router())
+    assert ok is True and "netwatch" in detail

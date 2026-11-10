@@ -265,28 +265,51 @@ class Watchdog:
             return None, f"проверка не выполнена: {err}"
 
     async def _check_router(self) -> tuple[bool | None, str]:
+        from .mikrotik import MikrotikAuthError, MikrotikError
+
         client = self.runtime.site.client
         table = (self.cfg.get("routing_table") or "main").strip()
         tried = []
-        for target in self.targets:
-            ok = await client.ping(target, routing_table=table, count=2)
-            tried.append(target)
-            if ok:
-                return True, f"{target} отвечает (с роутера, таблица {table})"
-        return False, f"не отвечают {', '.join(tried)} (с роутера, таблица {table})"
+        try:
+            for target in self.targets:
+                ok = await client.ping(target, routing_table=table, count=2)
+                tried.append(target)
+                if ok:
+                    return True, f"{target} отвечает (пинг с роутера, таблица {table})"
+        except MikrotikAuthError:
+            raise
+        except MikrotikError as err:
+            if "permission" not in str(err):
+                raise
+            # The HA user has no "test" policy (by design): the router's own
+            # netwatch entries for the same addresses tell the same thing.
+            ok, detail = await self._check_netwatch(self.targets)
+            return ok, f"{detail} (ping учётке HA не разрешён — по netwatch)"
+        return (
+            False,
+            f"не отвечают {', '.join(tried)} (пинг с роутера, таблица {table})",
+        )
 
-    async def _check_netwatch(self) -> tuple[bool | None, str]:
-        host = self.cfg.get("netwatch_host") or ""
-        rows = await self.runtime.site.client.netwatch()
-        for row in rows:
-            if row.get("host") == host:
-                status = str(row.get("status", ""))
-                if status == "up":
-                    return True, f"netwatch {host}: up"
-                if status == "down":
-                    return False, f"netwatch {host}: down"
-                return None, f"netwatch {host}: {status or 'неизвестно'}"
-        return None, f"netwatch {host} не найден на роутере"
+    async def _check_netwatch(
+        self, hosts: list[str] | None = None
+    ) -> tuple[bool | None, str]:
+        if hosts is None:
+            one = (self.cfg.get("netwatch_host") or "").strip()
+            hosts = [one] if one else self.targets
+        rows = [
+            r
+            for r in await self.runtime.site.client.netwatch()
+            if r.get("host") in hosts and str(r.get("disabled")) != "true"
+        ]
+        if not rows:
+            return None, f"на роутере нет netwatch для {', '.join(hosts)}"
+        up = [r["host"] for r in rows if r.get("status") == "up"]
+        down = [r["host"] for r in rows if r.get("status") == "down"]
+        if up:
+            return True, f"netwatch: {', '.join(up)} отвечает"
+        if down:
+            return False, f"netwatch: не отвечают {', '.join(down)}"
+        return None, "netwatch: состояние неизвестно"
 
     async def _check_ha(self) -> tuple[bool | None, str]:
         for target in self.targets:

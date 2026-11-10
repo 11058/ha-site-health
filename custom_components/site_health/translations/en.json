@@ -269,7 +269,7 @@
           "data_description": {
             "targets": "Comma separated. No internet = none answered. For the HA check host:port is allowed (443 by default).",
             "routing_table": "main = the normal path; a backup uplink's table checks that uplink alone.",
-            "netwatch_host": "Host of an existing netwatch entry on the core router.",
+            "netwatch_host": "Empty = netwatch entries of the addresses above. A router ping without the test policy falls back to netwatch too.",
             "down_after_min": "Short outages that heal themselves are left alone.",
             "step1": "Steps run one by one until the internet is back. Power cycling goes last.",
             "power_entity": "The HA switch the equipment is plugged into (Tuya, ESPHome, Shelly...).",
@@ -308,7 +308,7 @@
           "data_description": {
             "targets": "Comma separated. No internet = none answered. For the HA check host:port is allowed (443 by default).",
             "routing_table": "main = the normal path; a backup uplink's table checks that uplink alone.",
-            "netwatch_host": "Host of an existing netwatch entry on the core router.",
+            "netwatch_host": "Empty = netwatch entries of the addresses above. A router ping without the test policy falls back to netwatch too.",
             "down_after_min": "Short outages that heal themselves are left alone.",
             "step1": "Steps run one by one until the internet is back. Power cycling goes last.",
             "power_entity": "The HA switch the equipment is plugged into (Tuya, ESPHome, Shelly...).",

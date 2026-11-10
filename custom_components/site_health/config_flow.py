@@ -970,9 +970,9 @@ class WatchdogSubentryFlow(ConfigSubentryFlow):
 
     def _errors(self, data: dict[str, Any]) -> dict[str, str]:
         errors: dict[str, str] = {}
-        if data["probe"] == "netwatch" and not data.get("netwatch_host"):
-            errors["netwatch_host"] = "netwatch_needed"
-        if data["probe"] != "netwatch" and not str(data.get("targets") or "").strip():
+        if not str(data.get("targets") or "").strip() and not (
+            data["probe"] == "netwatch" and data.get("netwatch_host")
+        ):
             errors["targets"] = "targets_needed"
         if any(data.get(f"step{i}") == "power" for i in range(1, 5)) and not data.get(
             "power_entity"
